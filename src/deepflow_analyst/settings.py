@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     # W11 的 ModelRouter 会按复杂度自动分流。
     default_model: str = "deepseek/deepseek-v3.2"
 
+    # 0.0 让 SQL 生成和评估稳定、可比较。生产里解读阶段可以调高一点让话术
+    # 更自然（W11 的 ModelRouter 会按任务分配不同 temperature）。
+    default_temperature: float = 0.0
+
     database_url: str = "postgresql+psycopg://deepflow:deepflow@localhost:5432/deepflow"
 
 

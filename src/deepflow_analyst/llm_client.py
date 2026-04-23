@@ -12,10 +12,15 @@ def get_client() -> AsyncOpenAI:
     )
 
 
-async def chat(messages: list[dict[str, str]], model: str | None = None) -> str:
+async def chat(
+    messages: list[dict[str, str]],
+    model: str | None = None,
+    temperature: float | None = None,
+) -> str:
     client = get_client()
     resp = await client.chat.completions.create(
         model=model or settings.default_model,
         messages=messages,  # type: ignore[arg-type]
+        temperature=temperature if temperature is not None else settings.default_temperature,
     )
     return resp.choices[0].message.content or ""
