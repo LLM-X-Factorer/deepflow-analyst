@@ -1,0 +1,41 @@
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Node / Frontend
+node_modules/
+.pnp
+.pnp.js
+web/dist/
+web/.vite/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Data (large seed files should be fetched, not committed)
+data/seed/*.sql
+data/seed/*.sql.gz
+data/local/
+
+# Logs
+*.log
+logs/
