@@ -17,6 +17,7 @@ mechanical; the pattern — not the framework — is what matters.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -27,6 +28,7 @@ from sqlalchemy import text
 
 from ..db import engine
 from ..llm_client import chat
+from ..settings import settings
 
 CHINOOK_SCHEMA = """\
 Tables (PostgreSQL, all identifiers are lowercase and unquoted):
@@ -160,13 +162,22 @@ def execute_sql(sql: str) -> tuple[list[str], list[list[Any]]]:
     return columns, rows
 
 
-async def generate_sql(question: str) -> str:
-    """Role 1 · SQL Writer Agent."""
+async def generate_sql(question: str, temperature: float | None = None) -> str:
+    """Role 1 · SQL Writer Agent.
+
+    ``temperature`` is an override only used by the Z stability-sampling
+    path. Default (``None``) keeps the deterministic temp=0 behavior and
+    forwards no temperature kwarg, so legacy call sites and test mocks
+    without the kwarg keep working.
+    """
     messages = [
         {"role": "system", "content": SQL_SYSTEM_PROMPT},
         {"role": "user", "content": question},
     ]
-    raw = await chat(messages)
+    if temperature is None:
+        raw = await chat(messages)
+    else:
+        raw = await chat(messages, temperature=temperature)
     return _strip_markdown(raw)
 
 
@@ -207,20 +218,82 @@ async def interpret(
     return (await chat(messages)).strip()
 
 
+async def _writer_review_once(question: str, writer_temp: float | None) -> str:
+    draft = await generate_sql(question, temperature=writer_temp)
+    validate_sql(draft)
+    reviewed = await review_sql(question, draft)
+    validate_sql(reviewed)
+    return ensure_limit(reviewed, default=1000)
+
+
+def _result_vote_key(columns: list[str], rows: list[list[Any]]) -> tuple[Any, ...]:
+    """Canonical key for result-level majority voting.
+
+    Uses multiset semantics (sorted stringified rows) so two candidates that
+    return the same rows in different orders are grouped together. This is
+    the right equivalence class for self-consistency — if downstream cares
+    about ORDER BY, it can still fail the ordering check on the winner.
+    """
+    canonical = tuple(tuple("NULL" if v is None else str(v) for v in row) for row in rows)
+    return (tuple(columns), tuple(sorted(canonical)))
+
+
+async def generate_reviewed_sql(question: str) -> str:
+    """Writer → Reviewer with optional Z-style majority voting.
+
+    * ``settings.sample_size <= 1`` (default): single-shot, temp=0.
+    * ``settings.sample_size > 1``: Writer is sampled N times at
+      ``sample_temperature`` (for diversity), each candidate is reviewed at
+      temp=0 and executed against the live DB, and the SQL whose result set
+      is the majority is returned. Ties: first encountered wins.
+
+    Executing every candidate is intentional — result-level voting is what
+    absorbs surface-form variation between equivalent queries. Writer
+    candidates that fail validation or review are dropped; only candidates
+    with a successful execution participate in the vote.
+    """
+    n = max(1, settings.sample_size)
+    if n == 1:
+        return await _writer_review_once(question, writer_temp=None)
+
+    temp = settings.sample_temperature
+    candidates = await asyncio.gather(
+        *(_writer_review_once(question, writer_temp=temp) for _ in range(n)),
+        return_exceptions=True,
+    )
+
+    groups: dict[tuple[Any, ...], str] = {}
+    tallies: dict[tuple[Any, ...], int] = {}
+    first_successful: str | None = None
+    for c in candidates:
+        if isinstance(c, BaseException):
+            continue
+        try:
+            cols, rows = execute_sql(c)
+        except Exception:
+            continue
+        if first_successful is None:
+            first_successful = c
+        key = _result_vote_key(cols, rows)
+        tallies[key] = tallies.get(key, 0) + 1
+        groups.setdefault(key, c)  # keep first SQL seen for this result set
+
+    if not tallies:
+        raise RuntimeError("All sampled SQL candidates failed to execute")
+
+    winner_key = max(tallies, key=lambda k: tallies[k])
+    return groups[winner_key]
+
+
 async def run(question: str) -> QueryResult:
     """Orchestrate the 4-role pipeline.
 
     Writer → Reviewer → Executor → Insight. Each arrow validates that
     the SQL remains a safe SELECT; the reviewer can rewrite it but
-    cannot smuggle in a forbidden statement.
+    cannot smuggle in a forbidden statement. With ``sample_size > 1``,
+    the Writer→Reviewer step is a self-consistency ensemble.
     """
-    draft_sql = await generate_sql(question)
-    validate_sql(draft_sql)
-
-    reviewed_sql = await review_sql(question, draft_sql)
-    validate_sql(reviewed_sql)
-
-    final_sql = ensure_limit(reviewed_sql)
+    final_sql = await generate_reviewed_sql(question)
     columns, rows = execute_sql(final_sql)
     answer = await interpret(question, final_sql, columns, rows)
 

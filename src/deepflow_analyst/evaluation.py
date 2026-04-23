@@ -88,21 +88,17 @@ def results_equal(
 
 
 async def evaluate_one(case: dict[str, Any]) -> CaseResult:
-    """Evaluate one case through the full Writer → Reviewer → Executor chain.
+    """Evaluate one case through the production SQL-generation path.
 
-    Previously this only ran the Writer, so any measured gain after adding
-    the Reviewer was invisible (or worse, indistinguishable from LLM noise).
-    Now the SQL that gets executed is identical to what production runs,
-    which is the whole point of an evaluation harness.
+    Calls ``pipeline.generate_reviewed_sql`` so whatever ensemble/sampling
+    policy is configured (Z: settings.sample_size > 1) is exercised exactly
+    as in production. Previously this bypassed the Reviewer entirely, which
+    hid gains from later changes; hard-coding Writer-only here would do the
+    same to the Z stability-sampling work.
     """
     expected_sql = case["expected_sql"]
     try:
-        draft = await pipeline.generate_sql(case["question"])
-        pipeline.validate_sql(draft)
-        reviewed = await pipeline.review_sql(case["question"], draft)
-        pipeline.validate_sql(reviewed)
-        # Use a generous LIMIT so legitimate large result sets aren't truncated.
-        generated = pipeline.ensure_limit(reviewed, default=1000)
+        generated = await pipeline.generate_reviewed_sql(case["question"])
         actual_rows = _execute(generated)
         expected_rows = _execute(expected_sql)
         passed = results_equal(

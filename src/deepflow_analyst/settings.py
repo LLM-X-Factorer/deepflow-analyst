@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     # 更自然（W11 的 ModelRouter 会按任务分配不同 temperature）。
     default_temperature: float = 0.0
 
+    # Z · stability sampling. sample_size > 1 开启「self-consistency」：Writer
+    # 以 sample_temperature 采样 K 次 → 各自 Reviewer+Execute → 按结果集多数
+    # 投票。目的是吸收 OpenRouter 上游路由的 ±5pp 噪声，让 EVAL_THRESHOLD 能
+    # 抬高到基线附近。sample_size=1 完全等价原单次路径（零开销）。
+    sample_size: int = 1
+    sample_temperature: float = 0.5
+
     database_url: str = "postgresql+psycopg://deepflow:deepflow@localhost:5432/deepflow"
 
 

@@ -68,6 +68,118 @@ def test_jsonable_decimal_and_datetime() -> None:
     assert pipeline._jsonable(datetime(2026, 4, 23, 12, 0)).startswith("2026-04-23")
 
 
+def test_result_vote_key_order_insensitive() -> None:
+    k1 = pipeline._result_vote_key(["n"], [["a"], ["b"]])
+    k2 = pipeline._result_vote_key(["n"], [["b"], ["a"]])
+    assert k1 == k2
+
+
+def test_result_vote_key_distinguishes_rows() -> None:
+    assert pipeline._result_vote_key(["n"], [["a"]]) != pipeline._result_vote_key(["n"], [["b"]])
+    assert pipeline._result_vote_key(["n"], [["a"]]) != pipeline._result_vote_key(["m"], [["a"]])
+    # None is canonicalized to "NULL" — same as literal string "NULL" collides,
+    # but that's intentional and acceptable for voting.
+
+
+@pytest.mark.asyncio
+async def test_generate_reviewed_sql_single_shot_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    from deepflow_analyst import settings as _settings
+
+    monkeypatch.setattr(_settings.settings, "sample_size", 1)
+    calls: list[dict[str, Any]] = []
+
+    async def fake_chat(
+        messages: list[dict[str, str]],
+        model: str | None = None,
+        temperature: float | None = None,
+    ) -> str:
+        calls.append({"temperature": temperature})
+        return "SELECT 1 AS n"
+
+    monkeypatch.setattr(pipeline, "chat", fake_chat)
+
+    sql = await pipeline.generate_reviewed_sql("ping")
+    assert sql.startswith("SELECT 1")
+    # Exactly 2 LLM calls: writer + reviewer, both at default temp (None → temp=0).
+    assert len(calls) == 2
+    assert all(c["temperature"] is None for c in calls)
+
+
+@pytest.mark.asyncio
+async def test_generate_reviewed_sql_majority_vote(monkeypatch: pytest.MonkeyPatch) -> None:
+    """3 samples → 2 agree, 1 disagrees → majority wins."""
+    from deepflow_analyst import settings as _settings
+
+    monkeypatch.setattr(_settings.settings, "sample_size", 3)
+    monkeypatch.setattr(_settings.settings, "sample_temperature", 0.5)
+
+    writer_outputs = iter(
+        [
+            "SELECT 1 AS n",  # sample 1: writer
+            "SELECT 1 AS n",  # sample 2: writer (same result set)
+            "SELECT 2 AS n",  # sample 3: writer (different result set)
+        ]
+    )
+
+    async def fake_chat(
+        messages: list[dict[str, str]],
+        model: str | None = None,
+        temperature: float | None = None,
+    ) -> str:
+        system = messages[0]["content"]
+        if "SQL reviewer" in system:
+            # Reviewer echoes the candidate verbatim.
+            return messages[-1]["content"].split("Candidate SQL:\n", 1)[-1].strip()
+        return next(writer_outputs)
+
+    monkeypatch.setattr(pipeline, "chat", fake_chat)
+
+    def fake_execute(sql: str) -> tuple[list[str], list[list[Any]]]:
+        if "1 AS n" in sql or "1 as n" in sql.lower():
+            return ["n"], [[1]]
+        return ["n"], [[2]]
+
+    monkeypatch.setattr(pipeline, "execute_sql", fake_execute)
+
+    sql = await pipeline.generate_reviewed_sql("ignored")
+    # Winner must be from the 2/3 majority group.
+    assert "1" in sql and "2" not in sql
+
+
+@pytest.mark.asyncio
+async def test_generate_reviewed_sql_sampling_falls_back_to_successful(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When candidates fail validation/execute, voting still picks from survivors."""
+    from deepflow_analyst import settings as _settings
+
+    monkeypatch.setattr(_settings.settings, "sample_size", 3)
+
+    writer_outputs = iter(
+        [
+            "DROP TABLE customer",  # sample 1: fails validation
+            "SELECT 42 AS n",  # sample 2: ok
+            "SELECT 42 AS n",  # sample 3: ok
+        ]
+    )
+
+    async def fake_chat(
+        messages: list[dict[str, str]],
+        model: str | None = None,
+        temperature: float | None = None,
+    ) -> str:
+        system = messages[0]["content"]
+        if "SQL reviewer" in system:
+            return messages[-1]["content"].split("Candidate SQL:\n", 1)[-1].strip()
+        return next(writer_outputs)
+
+    monkeypatch.setattr(pipeline, "chat", fake_chat)
+    monkeypatch.setattr(pipeline, "execute_sql", lambda sql: (["n"], [[42]]))
+
+    sql = await pipeline.generate_reviewed_sql("ignored")
+    assert "42" in sql
+
+
 @pytest.mark.asyncio
 async def test_run_end_to_end_with_mocked_llm(monkeypatch: pytest.MonkeyPatch) -> None:
     if not _db.ping():

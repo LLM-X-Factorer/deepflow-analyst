@@ -45,6 +45,14 @@ CrewAI 对一个**固定 4 步流水线**是 overkill——它的 planner agent 
 
 未固定温度时本地跑 4/7 而 CI 跑 5/7 → 14pp 随机漂移让每个改动都无法 measure。pinned `settings.default_temperature = 0.0` 后两次 back-to-back eval 产出一致 57.1%，此后所有改动都可以用数据对比。**不要把它改回 >0**，除非 W11 教学里有意对比 temperature 对解读 naturalness 的影响（且只针对 Insight agent，不影响 SQL Writer）。
 
+### 为什么 Z 用 SAMPLE_TEMPERATURE=0.5 而 default_temperature 还是 0
+
+两个温度管两件事：
+- `default_temperature = 0.0` 管单 shot + Reviewer + Insight，用于**可复现**
+- `sample_temperature = 0.5` 只在 `SAMPLE_SIZE > 1` 时给 Writer 用，用于**多样性**
+
+Self-consistency 要求 K 个候选 diverge 才能 vote 出 signal；如果都用 temp=0 就是 K 份一样的答案，投票没意义。每个候选被 Reviewer（temp=0）规整后再执行、按**结果集**（不是 SQL 文本）多数投票——surface-form 差异不扣分。
+
 ---
 
 ## 本地端口映射（避开常见本地开发占用）
@@ -77,9 +85,10 @@ cd web && pnpm install && pnpm dev
 
 ### 本地跑评估
 ```bash
-uv run deepflow-eval                      # 全量（20 cases）
+uv run deepflow-eval                      # 全量（20 cases · 单次采样 · 最省 token）
 EVAL_LIMIT=3 uv run deepflow-eval         # smoke test
 EVAL_THRESHOLD=0.70 uv run deepflow-eval  # 紧阈值
+SAMPLE_SIZE=3 uv run deepflow-eval        # Z · 多数投票（CI 走这条路径）
 ```
 
 ### 换依赖后必须 `--build`
@@ -132,12 +141,13 @@ question → intent(LLM)
 
 | 指标 | 值 | 备注 |
 |------|-----|-----|
-| Accuracy (local) | 12/20 = **60%** | deepseek-v3.2 · temp=0 · 稳定 |
-| Accuracy (CI) | 55-60% | OpenRouter 上游路由 noise ±5pp |
+| Accuracy (local N=1) | 12/20 = **60%** | deepseek-v3.2 · temp=0 · 稳定 |
+| Accuracy (local N=3) | 12/20 = **60%** | Z · 三轮完全重复的 per-case 结果，lift 为 0（ceiling-bound） |
+| Accuracy (CI N=3) | ~60% | Z 吸收 ±5pp provider noise |
 | Easy | 6/6 = 100% | |
 | Medium | 5/9 = 56% | |
 | Hard | 1/5 = 20% | **瓶颈**：self-join / DISTINCT ON / 5-way JOIN / 算法歧义 |
-| `EVAL_THRESHOLD` | 0.55 | 基线 - 5pp buffer 防 noise flap |
+| `EVAL_THRESHOLD` | 0.60 | Z 消 noise 后，阈值从 0.55 抬到 0.60，卡住基线 |
 
 ---
 
@@ -149,7 +159,7 @@ question → intent(LLM)
 - [x] prompt 工程（tie-break + 列精确性 → 45%→60%）
 - [x] 4-role 架构（+ SQL Reviewer）
 - [x] W8 HITL（LangGraph StateGraph + intent 分类 + 写拦截 + interrupt-resume 澄清）
-- [ ] **Z · stability sampling**（multi-sample majority vote → 消 CI noise）
+- [x] Z · stability sampling（Writer N-sample × Reviewer × 结果集多数投票 · CI 阈值抬到 0.60）
 - [ ] **X · few-shot example bank**（轻量 RAG → 预期 Hard 20%→45%，总 60%→70%+）
 - [ ] W11 LLMOps（Langfuse tracing + ModelRouter）
 - [ ] W12 Kubernetes 部署（Helm + HPA + NetworkPolicy）
