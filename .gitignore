@@ -43,3 +43,6 @@ data/local/
 # Logs
 *.log
 logs/
+
+# Evaluation run artifacts (checked into CI artifacts, not git)
+evaluation_report.md
