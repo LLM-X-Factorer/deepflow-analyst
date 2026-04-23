@@ -5,7 +5,7 @@
 > 用自然语言提问，多 Agent 协作生成 SQL、在沙箱中执行、产出带图表的分析报告。
 > 面向非技术的业务分析师 / 产品经理 / 运营 / 市场。
 
-🚦 当前版本：`v0.2 · W6 E2E 简版` — 单 LLM 调用把"自然语言问题 → SQL → 执行 → 解读"打通。CrewAI / LangGraph / HITL / RAG / 评估 / LLMOps 等在后续周次逐步替换升级。
+🚦 当前版本：`v0.2 · W6 E2E + W10 评估门禁` — 单 LLM 调用把"自然语言问题 → SQL → 执行 → 解读"打通，CI 里跑 Execution Accuracy 门禁。CrewAI / LangGraph / HITL / RAG / LLMOps 等在后续周次逐步替换升级。
 
 ---
 
@@ -72,9 +72,12 @@ deepflow-analyst/
 │   ├── settings.py         # pydantic-settings 配置
 │   ├── llm_client.py       # OpenRouter 客户端
 │   ├── db.py               # SQLAlchemy engine
+│   ├── evaluation.py       # 评估主逻辑 + CLI（`deepflow-eval`）
 │   └── agent/              # 查询流水线
 │       └── pipeline.py     # generate_sql → validate → execute → interpret
-├── tests/                  # pytest（22 项，含 mock LLM 集成测试）
+├── tests/
+│   ├── test_*.py           # 33 项单元测试 + mock LLM 集成
+│   └── golden/             # 评估用黄金数据集（JSONL）
 ├── web/                    # React + Vite + MUI 前端
 ├── data/seed/              # Chinook SQL（git 忽略，脚本拉取）
 ├── scripts/                # 运维脚本
@@ -83,6 +86,45 @@ deepflow-analyst/
 ├── docker-compose.yml      # app + postgres
 └── pyproject.toml          # uv / ruff / mypy / pytest 配置
 ```
+
+---
+
+## 评估门禁（Evaluation Gate）
+
+CI 里第三个 job `evaluation` 会在 `pull_request` / `push to main` 时运行：
+
+1. 起一个 PostgreSQL 16 service，灌入 Chinook
+2. 跑 `uv run deepflow-eval`——对每条 golden case：生成 SQL → 执行 → 与 ground truth SQL 的执行结果做集合等价比较
+3. 计算 **Execution Accuracy**；低于 `EVAL_THRESHOLD`（默认 0.50）则 fail
+4. 上传 `evaluation_report.md` 为 artifact，并写入 PR 的 Step Summary
+
+### 本地跑评估
+
+```bash
+# 前提：docker compose 已起、.env 里有真实 OPENROUTER_API_KEY
+uv run deepflow-eval
+
+# 只跑前 3 条做 smoke test
+EVAL_LIMIT=3 uv run deepflow-eval
+
+# 把门槛调紧
+EVAL_THRESHOLD=0.80 uv run deepflow-eval
+```
+
+### 启用 CI 门禁：配置 GitHub Secret
+
+没有 `OPENROUTER_API_KEY` secret 时，CI 会 **graceful skip**（绿但带 warning）。启用门禁：
+
+```bash
+gh secret set OPENROUTER_API_KEY -R LLM-X-Factorer/deepflow-analyst
+# 粘贴你的 OpenRouter key，回车即可
+```
+
+或者去 repo Settings → Secrets and variables → Actions → New repository secret，名字写 `OPENROUTER_API_KEY`。
+
+### 扩充黄金数据集
+
+`tests/golden/golden_dataset.jsonl` 当前有 7 条（3 easy / 3 medium / 1 hard）。W10 教学环节学员要扩到 50+ 条——这也是 fork 成自己简历项目时最直观的 customization 点。格式说明见 `tests/golden/README.md`。
 
 ---
 
@@ -99,7 +141,7 @@ deepflow-analyst/
 | W7 | MCP · E2B 沙箱 · 外部 API |
 | W8 | LangGraph 主流程 · Postgres Checkpointer |
 | W9 | HITL（写操作拦截 · 意图澄清 · 敏感表审核） |
-| W10 | 黄金数据集 · DeepEval · CI 评估门禁 |
+| W10 | ✅ 黄金数据集（7 条种子）· Execution Accuracy · CI 评估门禁；DeepEval 高级指标（Faithfulness / Relevancy）在 W11 教学周补充 |
 | W11 | Langfuse · ModelRouter · 语义缓存 · FinOps |
 | W12 | Kubernetes · Helm · HPA |
 | W13 | 蓝绿部署 · 评估阈值门禁 |

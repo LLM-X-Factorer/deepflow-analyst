@@ -56,3 +56,82 @@ jobs:
           tags: deepflow-analyst:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  evaluation:
+    name: Evaluation · execution-accuracy gate
+    runs-on: ubuntu-latest
+    needs: backend
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: deepflow
+          POSTGRES_PASSWORD: deepflow
+          POSTGRES_DB: deepflow
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U deepflow -d deepflow"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Python 3.11
+        run: uv python install 3.11
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Fetch Chinook seed
+        run: bash scripts/fetch-chinook.sh
+
+      - name: Load Chinook into Postgres
+        env:
+          PGPASSWORD: deepflow
+        run: |
+          psql -h localhost -U deepflow -d deepflow \
+               -v ON_ERROR_STOP=1 \
+               -f data/seed/01-chinook.sql > /tmp/chinook.log 2>&1 \
+               || { tail -n 40 /tmp/chinook.log; exit 1; }
+          echo "loaded $(psql -h localhost -U deepflow -d deepflow -tAc \
+               "SELECT COUNT(*) FROM artist") artists into CI postgres"
+
+      - name: Run evaluation gate
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          DATABASE_URL: postgresql+psycopg://deepflow:deepflow@localhost:5432/deepflow
+          EVAL_THRESHOLD: "0.50"
+        run: |
+          if [ -z "$OPENROUTER_API_KEY" ]; then
+            echo "::warning title=Evaluation skipped::OPENROUTER_API_KEY secret not configured. Set it in repo settings to enable the accuracy gate."
+            {
+              echo "# Evaluation skipped"
+              echo
+              echo "The \`OPENROUTER_API_KEY\` repository secret is not set, so this job"
+              echo "short-circuited without calling the LLM or scoring the golden dataset."
+              echo
+              echo "## How to enable"
+              echo
+              echo '```bash'
+              echo 'gh secret set OPENROUTER_API_KEY -R LLM-X-Factorer/deepflow-analyst'
+              echo '# paste your key when prompted'
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          uv run deepflow-eval
+
+      - name: Upload evaluation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluation-report
+          path: evaluation_report.md
+          if-no-files-found: ignore
