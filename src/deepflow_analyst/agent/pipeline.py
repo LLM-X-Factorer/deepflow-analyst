@@ -1,4 +1,19 @@
-"""End-to-end query pipeline: NL question → SQL → execution → interpretation."""
+"""End-to-end query pipeline organized as a 4-role multi-agent architecture.
+
+Roles (CrewAI-style, no framework dependency):
+  1. SQL Writer     (LLM)    question      → initial SQL
+  2. SQL Reviewer   (LLM)    SQL + question → refined SQL (critic loop)
+  3. SQL Executor   (Python) SQL            → (columns, rows)
+                    Pure Python is intentional: validation and DB I/O are
+                    deterministic steps that would only burn tokens if
+                    handed to an LLM.
+  4. Insight Agent  (LLM)    results        → Chinese explanation
+
+CrewAI itself isn't imported: for a fixed 4-step sequential pipeline, its
+planner would cost more tokens than it saves. W6 teaching materials note
+that swapping this out for `crewai.Crew(process=Process.sequential)` is
+mechanical; the pattern — not the framework — is what matters.
+"""
 
 from __future__ import annotations
 
@@ -53,6 +68,25 @@ SQL_SYSTEM_PROMPT = (
     "6. Output ONLY SQL. No markdown fences, no comments, no explanation.\n\n"
     "SCHEMA:\n" + CHINOOK_SCHEMA
 )
+
+SQL_REVIEW_SYSTEM_PROMPT = (
+    "You are a senior SQL reviewer for a PostgreSQL data analyst product.\n"
+    "You will receive a user question and a candidate SELECT statement.\n"
+    "Check specifically:\n"
+    "- Does the SELECT list match ONLY the columns the user asked for?\n"
+    "  (Flag extra id columns, extra helper columns, missing requested columns.)\n"
+    "- If ORDER BY is present, does it include a deterministic tie-breaker\n"
+    "  (primary key or unique column) so the ordering is stable?\n"
+    "- Are JOIN types semantically right (INNER vs LEFT vs anti-join)?\n"
+    "- Is LIMIT appropriate for the question?\n"
+    "- Are aggregations and GROUP BY columns consistent?\n"
+    "\n"
+    "If the query is correct, return it UNCHANGED.\n"
+    "If the query has issues, return the FIXED version.\n"
+    "Output ONLY SQL — no markdown fences, no explanation, no preamble.\n\n"
+    "SCHEMA:\n" + CHINOOK_SCHEMA
+)
+
 
 INTERPRET_SYSTEM_PROMPT = (
     "你是一位数据分析师助手，用简体中文向非技术同事解读查询结果。\n"
@@ -127,9 +161,26 @@ def execute_sql(sql: str) -> tuple[list[str], list[list[Any]]]:
 
 
 async def generate_sql(question: str) -> str:
+    """Role 1 · SQL Writer Agent."""
     messages = [
         {"role": "system", "content": SQL_SYSTEM_PROMPT},
         {"role": "user", "content": question},
+    ]
+    raw = await chat(messages)
+    return _strip_markdown(raw)
+
+
+async def review_sql(question: str, candidate_sql: str) -> str:
+    """Role 2 · SQL Reviewer Agent (critic loop).
+
+    Returns either the original SQL unchanged or a refined version.
+    """
+    messages = [
+        {"role": "system", "content": SQL_REVIEW_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": f"User question: {question}\n\nCandidate SQL:\n{candidate_sql}",
+        },
     ]
     raw = await chat(messages)
     return _strip_markdown(raw)
@@ -157,13 +208,24 @@ async def interpret(
 
 
 async def run(question: str) -> QueryResult:
-    sql = await generate_sql(question)
-    validate_sql(sql)
-    sql = ensure_limit(sql)
-    columns, rows = execute_sql(sql)
-    answer = await interpret(question, sql, columns, rows)
+    """Orchestrate the 4-role pipeline.
+
+    Writer → Reviewer → Executor → Insight. Each arrow validates that
+    the SQL remains a safe SELECT; the reviewer can rewrite it but
+    cannot smuggle in a forbidden statement.
+    """
+    draft_sql = await generate_sql(question)
+    validate_sql(draft_sql)
+
+    reviewed_sql = await review_sql(question, draft_sql)
+    validate_sql(reviewed_sql)
+
+    final_sql = ensure_limit(reviewed_sql)
+    columns, rows = execute_sql(final_sql)
+    answer = await interpret(question, final_sql, columns, rows)
+
     return QueryResult(
-        sql=sql,
+        sql=final_sql,
         columns=columns,
         rows=rows,
         row_count=len(rows),

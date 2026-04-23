@@ -73,10 +73,12 @@ async def test_run_end_to_end_with_mocked_llm(monkeypatch: pytest.MonkeyPatch) -
     if not _db.ping():
         pytest.skip("postgres not reachable; integration test requires chinook loaded")
 
+    # Three LLM calls in order: SQL Writer → SQL Reviewer → Insight.
     responses = iter(
         [
-            "SELECT name FROM artist ORDER BY artist_id LIMIT 3",
-            "前三位艺人分别是 AC/DC、Accept、Aerosmith。",
+            "SELECT name FROM artist ORDER BY artist_id LIMIT 3",  # Writer
+            "SELECT name FROM artist ORDER BY artist_id LIMIT 3",  # Reviewer (unchanged)
+            "前三位艺人分别是 AC/DC、Accept、Aerosmith。",  # Insight
         ]
     )
 
