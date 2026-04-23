@@ -21,8 +21,8 @@ import { getHealth, postQuery, type QueryResponse } from "./api";
 const SAMPLE_QUESTIONS = [
   "销售额最高的 5 个国家分别是哪些？",
   "曲目最多的 10 位艺人",
-  "哪些客户至少下过 10 次订单？",
-  "Rock 风格的曲目里单价最贵的前 5 首",
+  "销量是多少？", // intentionally ambiguous — demos the clarify flow
+  "删除所有测试账户", // demos the write-intent rejection
 ];
 
 export default function App() {
@@ -30,6 +30,7 @@ export default function App() {
   const [result, setResult] = useState<QueryResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [health, setHealth] = useState("checking...");
+  const [clarifyAnswer, setClarifyAnswer] = useState("");
 
   useEffect(() => {
     getHealth()
@@ -37,19 +38,53 @@ export default function App() {
       .catch((e) => setHealth(`unreachable (${String(e)})`));
   }, []);
 
-  const handleSubmit = async () => {
+  const submitNew = async () => {
     if (!question.trim()) return;
     setLoading(true);
     setResult(null);
+    setClarifyAnswer("");
     try {
-      const resp = await postQuery(question);
+      const resp = await postQuery({ question });
       setResult(resp);
     } catch (e) {
-      setResult({ status: "error", answer: "网络或后端错误", error: String(e) });
+      setResult({
+        status: "error",
+        thread_id: "",
+        answer: "网络或后端错误",
+        error: String(e),
+      });
     } finally {
       setLoading(false);
     }
   };
+
+  const submitClarification = async () => {
+    if (!result || result.status !== "awaiting_clarification") return;
+    if (!clarifyAnswer.trim()) return;
+    setLoading(true);
+    try {
+      const resp = await postQuery({
+        thread_id: result.thread_id,
+        resume_input: clarifyAnswer,
+      });
+      setResult(resp);
+      setClarifyAnswer("");
+    } catch (e) {
+      setResult({
+        status: "error",
+        thread_id: result.thread_id,
+        answer: "resume 失败",
+        error: String(e),
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const awaiting = result?.status === "awaiting_clarification";
+  const rejected = result?.status === "write_rejected";
+  const ok = result?.status === "ok";
+  const errored = result?.status === "error";
 
   return (
     <Container maxWidth="lg" sx={{ py: 5 }}>
@@ -59,10 +94,10 @@ export default function App() {
             <Typography variant="h4" fontWeight={700}>
               DeepFlow Analyst
             </Typography>
-            <Chip label="W6 E2E" size="small" color="primary" variant="outlined" />
+            <Chip label="W8 HITL" size="small" color="primary" variant="outlined" />
           </Stack>
           <Typography variant="body2" color="text.secondary">
-            用自然语言问 Chinook 数据 · 单 LLM 调用原型（CrewAI / LangGraph 在后续周次接入）
+            LangGraph 多 Agent · 写操作自动拦截 · 意图歧义时反问澄清
           </Typography>
           <Typography variant="caption" color="text.secondary">
             {health}
@@ -79,6 +114,7 @@ export default function App() {
               multiline
               minRows={2}
               fullWidth
+              disabled={awaiting || loading}
             />
             <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
               {SAMPLE_QUESTIONS.map((s) => (
@@ -86,29 +122,81 @@ export default function App() {
                   key={s}
                   label={s}
                   size="small"
-                  onClick={() => setQuestion(s)}
+                  onClick={() => {
+                    setQuestion(s);
+                    setResult(null);
+                  }}
                   sx={{ cursor: "pointer" }}
+                  disabled={awaiting || loading}
                 />
               ))}
             </Stack>
             <Box>
               <Button
                 variant="contained"
-                onClick={handleSubmit}
-                disabled={loading || !question.trim()}
+                onClick={submitNew}
+                disabled={loading || !question.trim() || awaiting}
               >
-                {loading ? "thinking..." : "提交"}
+                {loading && !awaiting ? "thinking..." : "提交"}
               </Button>
             </Box>
           </Stack>
         </Paper>
 
-        {result?.status === "error" && (
+        {awaiting && (
+          <Paper variant="outlined" sx={{ p: 3, bgcolor: "warning.50", borderColor: "warning.main" }}>
+            <Stack spacing={2}>
+              <Box>
+                <Typography variant="overline" color="warning.main">
+                  需要你澄清一下
+                </Typography>
+                <Typography sx={{ mt: 0.5 }}>{result?.clarification_question}</Typography>
+              </Box>
+              <TextField
+                label="你的回答"
+                value={clarifyAnswer}
+                onChange={(e) => setClarifyAnswer(e.target.value)}
+                fullWidth
+                size="small"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey && clarifyAnswer.trim()) {
+                    e.preventDefault();
+                    submitClarification();
+                  }
+                }}
+              />
+              <Box>
+                <Button
+                  variant="contained"
+                  color="warning"
+                  onClick={submitClarification}
+                  disabled={loading || !clarifyAnswer.trim()}
+                >
+                  {loading ? "resuming..." : "回答并继续"}
+                </Button>
+              </Box>
+            </Stack>
+          </Paper>
+        )}
+
+        {rejected && (
+          <Alert severity="error" variant="outlined">
+            <Typography variant="body2" fontWeight={600}>
+              {result?.answer}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              thread_id: {result?.thread_id}
+            </Typography>
+          </Alert>
+        )}
+
+        {errored && (
           <Alert severity="error">
             <Typography variant="body2" fontWeight={600}>
-              {result.answer}
+              {result?.answer}
             </Typography>
-            {result.error && (
+            {result?.error && (
               <Typography variant="caption" sx={{ fontFamily: "monospace" }}>
                 {result.error}
               </Typography>
@@ -116,16 +204,16 @@ export default function App() {
           </Alert>
         )}
 
-        {result?.status === "ok" && (
+        {ok && (
           <Stack spacing={2}>
             <Paper variant="outlined" sx={{ p: 3 }}>
               <Typography variant="overline" color="text.secondary">
                 解读
               </Typography>
-              <Typography sx={{ mt: 0.5, whiteSpace: "pre-wrap" }}>{result.answer}</Typography>
+              <Typography sx={{ mt: 0.5, whiteSpace: "pre-wrap" }}>{result?.answer}</Typography>
             </Paper>
 
-            {result.sql && (
+            {result?.sql && (
               <Paper variant="outlined" sx={{ p: 2, bgcolor: "grey.900", color: "grey.100" }}>
                 <Typography variant="overline" sx={{ color: "grey.400" }}>
                   generated SQL
@@ -146,7 +234,7 @@ export default function App() {
               </Paper>
             )}
 
-            {result.columns && result.rows && (
+            {result?.columns && result?.rows && (
               <Paper variant="outlined">
                 <Box sx={{ px: 2, py: 1.5, borderBottom: 1, borderColor: "divider" }}>
                   <Typography variant="overline" color="text.secondary">
