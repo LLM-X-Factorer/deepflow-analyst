@@ -5,7 +5,10 @@
 > 用自然语言提问，多 Agent 协作生成 SQL、在沙箱中执行、产出带图表的分析报告。
 > 面向非技术的业务分析师 / 产品经理 / 运营 / 市场。
 
-🚦 当前版本：`v0.2 · W6 E2E + W10 评估门禁` — 单 LLM 调用把"自然语言问题 → SQL → 执行 → 解读"打通，CI 里跑 Execution Accuracy 门禁。CrewAI / LangGraph / HITL / RAG / LLMOps 等在后续周次逐步替换升级。
+🚦 当前版本：`v0.3 · W8 HITL + 20-case evaluation gate` —
+LangGraph StateGraph 编排的 4-role Agent（Writer / Reviewer / Executor / Insight），
+带 intent triage（写操作拦截）+ interrupt-based 意图澄清 HITL。
+CI 跑真实 LLM 的 20-case Execution Accuracy 门禁。RAG / LLMOps / K8s 在后续周次继续。
 
 ---
 
@@ -13,15 +16,16 @@
 
 | 层 | 选型 |
 |----|------|
-| 后端 | FastAPI · Uvicorn · SQLAlchemy · Pydantic v2 |
-| 前端 | React · Vite · MUI · TypeScript |
+| 后端 | FastAPI · Uvicorn · SQLAlchemy 2 · Pydantic v2 |
+| 前端 | React 19 · Vite 6 · MUI 6 · TypeScript 5 |
 | 数据 | PostgreSQL 16 · Chinook 数据集 |
-| LLM 网关 | OpenRouter（统一调 Claude / GPT / 开源模型） |
+| Agent 编排 | **LangGraph 1.1 StateGraph + MemorySaver** |
+| LLM 网关 | OpenRouter · 默认 **`deepseek/deepseek-v3.2`**（见 CLAUDE.md 里的模型选型理由） |
 | 包管理 | `uv`（Python 3.11）· `pnpm`（Node） |
 | 容器 | Docker · Docker Compose |
-| CI | GitHub Actions |
+| CI | GitHub Actions（backend lint/type/test · docker build · **evaluation gate**） |
 
-后续周次增量引入：Milvus（W4）· CrewAI（W6）· MCP/E2B（W7）· LangGraph（W8-9）· DeepEval（W10）· Langfuse（W11）· Kubernetes（W12-13）。
+后续周次增量引入：few-shot RAG（W4-5）· MCP/E2B（W7）· Langfuse + ModelRouter（W11）· Kubernetes（W12-13）。
 
 ---
 
@@ -47,9 +51,13 @@ docker compose up --build
 ```
 
 启动后：
-- 后端：http://localhost:8090  （`/health` · `/docs`）
-- 前端：http://localhost:5173  （W3 起可用）
+- 后端：http://localhost:8090  （`/health` · `/docs` · `POST /api/query`）
 - Postgres：`localhost:55433` · user/pass/db 均为 `deepflow`
+
+前端单独起（Vite 自动在 5173/5174/5175 中选第一个空的）：
+```bash
+cd web && pnpm install && pnpm dev
+```
 
 > 端口选择 8090 / 55433 而非默认 8000 / 5432 是为了避开常见本地开发占用。
 > 如需调整，改 `docker-compose.yml` 的 `ports` 和 `web/vite.config.ts` 的 `proxy`。
@@ -67,24 +75,26 @@ uv run uvicorn deepflow_analyst.main:app --reload
 
 ```
 deepflow-analyst/
-├── src/deepflow_analyst/   # Python 包（src 布局）
-│   ├── main.py             # FastAPI app
-│   ├── settings.py         # pydantic-settings 配置
-│   ├── llm_client.py       # OpenRouter 客户端
-│   ├── db.py               # SQLAlchemy engine
-│   ├── evaluation.py       # 评估主逻辑 + CLI（`deepflow-eval`）
-│   └── agent/              # 4-role 查询流水线（CrewAI-style，无框架依赖）
-│       └── pipeline.py     # Writer → Reviewer → Executor → Insight
+├── CLAUDE.md                 # 给 Claude Code / 进阶学员的项目指南（决策理由、踩坑清单）
+├── src/deepflow_analyst/
+│   ├── main.py               # FastAPI app + 多轮 /api/query 协议
+│   ├── settings.py           # pydantic-settings（temperature=0 等默认值）
+│   ├── llm_client.py         # OpenRouter 薄封装
+│   ├── db.py                 # SQLAlchemy engine
+│   ├── evaluation.py         # Execution Accuracy scorer + `deepflow-eval` CLI
+│   └── agent/
+│       ├── pipeline.py       # 4 SQL 角色（generate / review / execute / interpret）
+│       └── graph.py          # LangGraph StateGraph + intent triage + HITL interrupt
 ├── tests/
-│   ├── test_*.py           # 33 项单元测试 + mock LLM 集成
-│   └── golden/             # 评估用黄金数据集（JSONL）
-├── web/                    # React + Vite + MUI 前端
-├── data/seed/              # Chinook SQL（git 忽略，脚本拉取）
-├── scripts/                # 运维脚本
-├── .github/workflows/      # CI
-├── Dockerfile              # 多阶段构建
-├── docker-compose.yml      # app + postgres
-└── pyproject.toml          # uv / ruff / mypy / pytest 配置
+│   ├── test_*.py             # 37 项单测（pipeline / graph / evaluation / api）
+│   └── golden/               # 黄金数据集（20 条 NL→SQL ground truth）
+├── web/                      # React 19 + Vite 6 + MUI 6
+├── data/seed/                # Chinook SQL（git 忽略，脚本下载 + patch）
+├── scripts/fetch-chinook.sh  # 下载 Chinook + sed 剥离 CREATE DATABASE
+├── .github/workflows/ci.yml  # 3 job：backend · docker · evaluation gate
+├── Dockerfile                # 多阶段（uv builder → slim runtime）
+├── docker-compose.yml        # app + postgres
+└── pyproject.toml            # uv / ruff / mypy / pytest 配置
 ```
 
 ---
@@ -132,35 +142,35 @@ gh secret set OPENROUTER_API_KEY -R LLM-X-Factorer/deepflow-analyst
 
 ## 14 周 → 项目演进路线
 
-| 周 | 本仓库新增 |
+| 周 | 本仓库状态 |
 |----|----------|
 | W1 | ✅ 项目骨架 · Docker · FastAPI · Postgres · Chinook |
-| W2 | 产品画布 · PRD 文档 |
-| W3 | ✅ 前端 React+MUI · 全栈打通（跨 W6 一起先拉通） |
-| W4 | Schema RAG（Milvus · 向量化 DDL/业务语义 · 替换硬编码 schema） |
-| W5 | 混合检索 · 查询重写 · Cross-Encoder 重排 |
-| W6 | ✅ 首个端到端 Demo（单 LLM 简版）· CrewAI 四 Agent 版在教学周替换 |
-| W7 | MCP · E2B 沙箱 · 外部 API |
-| W8 | LangGraph 主流程 · Postgres Checkpointer |
-| W9 | HITL（写操作拦截 · 意图澄清 · 敏感表审核） |
-| W10 | ✅ 黄金数据集（7 条种子）· Execution Accuracy · CI 评估门禁；DeepEval 高级指标（Faithfulness / Relevancy）在 W11 教学周补充 |
-| W11 | Langfuse · ModelRouter · 语义缓存 · FinOps |
-| W12 | Kubernetes · Helm · HPA |
-| W13 | 蓝绿部署 · 评估阈值门禁 |
-| W14 | 商业化 · 定价 · GTM · 路演 |
+| W2 | 产品画布 · PRD 文档（课程材料侧，非代码） |
+| W3 | ✅ 前端 React+MUI · 全栈打通 |
+| W4-5 | ⏳ few-shot example bank / 简易 RAG（抬 Hard cases 的 accuracy） |
+| W6 | ✅ 首个端到端 Demo（4-role pipeline：Writer / Reviewer / Executor / Insight） |
+| W7 | ⏳ MCP · E2B 沙箱 · 外部 API 工具调用 |
+| W8 | ✅ **LangGraph StateGraph · MemorySaver · 写操作拦截 · interrupt-based 澄清 HITL** |
+| W9 | ⏳ 多轮对话扩展 · 敏感表审核 · PostgresSaver 持久化 |
+| W10 | ✅ 20 条 golden dataset · Execution Accuracy · CI 评估门禁（基线 12/20 = 60%） |
+| W11 | ⏳ Langfuse 可观测 · ModelRouter 路由 · 语义缓存 · FinOps |
+| W12 | ⏳ Kubernetes · Helm · HPA |
+| W13 | ⏳ 蓝绿部署 · 评估阈值门禁卡生产 |
+| W14 | ⏳ 商业化 · 定价 · GTM · 路演 |
 
 ---
 
 ## 如何把它改造成你自己的简历项目
 
-本仓库是**教学参考实现**——骨架不动、换数据就是一个新行业的 AI 产品：
+本仓库是**教学参考实现**——骨架不动，换数据就是一个新行业的 AI 产品：
 
 1. 替换 `data/seed/` 下的业务数据（金融 / 医疗 / 电商 / 游戏 / 法律 …）
-2. 替换 `src/deepflow_analyst/rag/schema_docs.md`（W4 会创建）里的字段语义
-3. 替换 `tests/golden/golden_dataset.jsonl`（W10 会创建）里的典型查询
-4. 调整 HITL 规则里的"敏感表白名单"
+2. 替换 `src/deepflow_analyst/agent/pipeline.py` 里 `CHINOOK_SCHEMA` 常量为你的业务 schema
+   （W4-5 教学里会升级成 Milvus/pgvector 的向量化 schema RAG）
+3. 替换 `tests/golden/golden_dataset.jsonl` 为你业务的 20-50 条典型查询 ground truth
+4. 调整 `graph.py` 里 `INTENT_SYSTEM_PROMPT` 的写操作/敏感表判定规则
 
-技术骨架（CrewAI 协作 · LangGraph 编排 · E2B 沙箱 · DeepEval 评估 · Langfuse 观测 · K8s 部署 · 评估门禁 CI/CD）完全复用。
+技术骨架（LangGraph 编排 · 4-role Agent · HITL interrupt · Execution Accuracy 评估 · 评估门禁 CI）全部复用。
 
 ---
 
