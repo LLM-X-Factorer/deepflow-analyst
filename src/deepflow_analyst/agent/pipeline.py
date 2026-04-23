@@ -44,7 +44,13 @@ SQL_SYSTEM_PROMPT = (
     "INSERT/UPDATE/DELETE/DROP/ALTER/TRUNCATE.\n"
     "2. Use only tables and columns from the provided schema.\n"
     "3. If the user question does not specify a limit, append LIMIT 100.\n"
-    "4. Output ONLY SQL. No markdown fences, no comments, no explanation.\n\n"
+    "4. SELECT only the columns the user explicitly asked for — do NOT add extra\n"
+    "   id columns or helper columns unless the user requested them.\n"
+    "5. When the query uses ORDER BY, append a deterministic tie-breaker column\n"
+    "   (typically a primary key like `artist_id`, `track_id`, or a unique name)\n"
+    "   so the result ordering is stable across runs. Example:\n"
+    "   `ORDER BY revenue DESC, customer_id` instead of `ORDER BY revenue DESC`.\n"
+    "6. Output ONLY SQL. No markdown fences, no comments, no explanation.\n\n"
     "SCHEMA:\n" + CHINOOK_SCHEMA
 )
 

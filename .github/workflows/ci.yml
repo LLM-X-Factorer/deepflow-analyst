@@ -107,9 +107,9 @@ jobs:
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           DATABASE_URL: postgresql+psycopg://deepflow:deepflow@localhost:5432/deepflow
-          # 当前 20 条黄金数据集基线是 9/20 = 45%（temp=0 稳定），0.40 留 5% buffer。
-          # 每次改进（W7+/W8+/W11）把 accuracy 抬上去后，再把阈值同步上调。
-          EVAL_THRESHOLD: "0.40"
+          # 当前 20 条黄金数据集基线 12/20 = 60%（prompt 加 tie-break + 列精确性后）。
+          # 0.55 锁定这个基线，留 5pp 回归 buffer。后续 CrewAI/LangGraph/RAG 改进抬上去后同步抬阈值。
+          EVAL_THRESHOLD: "0.55"
         run: |
           if [ -z "$OPENROUTER_API_KEY" ]; then
             echo "::warning title=Evaluation skipped::OPENROUTER_API_KEY secret not configured. Set it in repo settings to enable the accuracy gate."
