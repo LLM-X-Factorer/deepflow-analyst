@@ -41,7 +41,9 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W", "UP", "B", "SIM", "RUF"]
-ignore = ["E501"]
+# RUF001/002/003: 中文标点（，：。）和 ASCII 标点在本项目是刻意并存的，
+# 因为多处 prompt/提示面向中文用户。不要误杀。
+ignore = ["E501", "RUF001", "RUF002", "RUF003"]
 
 [tool.mypy]
 python_version = "3.11"

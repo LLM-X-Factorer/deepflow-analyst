@@ -5,7 +5,7 @@
 > 用自然语言提问，多 Agent 协作生成 SQL、在沙箱中执行、产出带图表的分析报告。
 > 面向非技术的业务分析师 / 产品经理 / 运营 / 市场。
 
-⚠️ 当前版本：`v0.1 · W1 骨架` — 仅包含 Docker + FastAPI + Postgres 基础脚手架。Agent/RAG/评估/LLMOps 等核心能力随课程进度逐周落地。
+🚦 当前版本：`v0.2 · W6 E2E 简版` — 单 LLM 调用把"自然语言问题 → SQL → 执行 → 解读"打通。CrewAI / LangGraph / HITL / RAG / 评估 / LLMOps 等在后续周次逐步替换升级。
 
 ---
 
@@ -71,9 +71,11 @@ deepflow-analyst/
 │   ├── main.py             # FastAPI app
 │   ├── settings.py         # pydantic-settings 配置
 │   ├── llm_client.py       # OpenRouter 客户端
-│   └── db.py               # SQLAlchemy engine
-├── tests/                  # pytest
-├── web/                    # React + Vite 前端（W3）
+│   ├── db.py               # SQLAlchemy engine
+│   └── agent/              # 查询流水线
+│       └── pipeline.py     # generate_sql → validate → execute → interpret
+├── tests/                  # pytest（22 项，含 mock LLM 集成测试）
+├── web/                    # React + Vite + MUI 前端
 ├── data/seed/              # Chinook SQL（git 忽略，脚本拉取）
 ├── scripts/                # 运维脚本
 ├── .github/workflows/      # CI
@@ -90,10 +92,10 @@ deepflow-analyst/
 |----|----------|
 | W1 | ✅ 项目骨架 · Docker · FastAPI · Postgres · Chinook |
 | W2 | 产品画布 · PRD 文档 |
-| W3 | 前端 React+MUI · 全栈打通 |
-| W4 | Schema RAG（Milvus · 向量化 DDL/业务语义） |
+| W3 | ✅ 前端 React+MUI · 全栈打通（跨 W6 一起先拉通） |
+| W4 | Schema RAG（Milvus · 向量化 DDL/业务语义 · 替换硬编码 schema） |
 | W5 | 混合检索 · 查询重写 · Cross-Encoder 重排 |
-| W6 | CrewAI 四 Agent · 首个端到端 Demo |
+| W6 | ✅ 首个端到端 Demo（单 LLM 简版）· CrewAI 四 Agent 版在教学周替换 |
 | W7 | MCP · E2B 沙箱 · 外部 API |
 | W8 | LangGraph 主流程 · Postgres Checkpointer |
 | W9 | HITL（写操作拦截 · 意图澄清 · 敏感表审核） |

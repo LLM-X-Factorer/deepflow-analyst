@@ -1,8 +1,10 @@
+from typing import Any
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from . import db
+from . import agent, db
 from .settings import settings
 
 app = FastAPI(
@@ -33,13 +35,30 @@ class QueryRequest(BaseModel):
 
 
 class QueryResponse(BaseModel):
+    status: str = "ok"
     answer: str
-    status: str = "not_implemented"
+    sql: str | None = None
+    columns: list[str] | None = None
+    rows: list[list[Any]] | None = None
+    row_count: int | None = None
+    error: str | None = None
 
 
 @app.post("/api/query", response_model=QueryResponse)
-def query(req: QueryRequest) -> QueryResponse:
-    return QueryResponse(
-        answer=f"Received: {req.question!r}. Agent pipeline lands in W6.",
-        status="not_implemented",
-    )
+async def query(req: QueryRequest) -> QueryResponse:
+    try:
+        result = await agent.run(req.question)
+        return QueryResponse(
+            status="ok",
+            answer=result.answer,
+            sql=result.sql,
+            columns=result.columns,
+            rows=result.rows,
+            row_count=result.row_count,
+        )
+    except Exception as e:
+        return QueryResponse(
+            status="error",
+            answer="抱歉，查询失败。请查看 error 字段，或联系运维。",
+            error=f"{type(e).__name__}: {e}",
+        )

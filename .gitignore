@@ -24,6 +24,10 @@ node_modules/
 .pnp.js
 web/dist/
 web/.vite/
+# tsc -b artifacts
+*.tsbuildinfo
+web/vite.config.js
+web/vite.config.d.ts
 
 # IDE / OS
 .vscode/

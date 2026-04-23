@@ -1,6 +1,11 @@
 export interface QueryResponse {
+  status: "ok" | "error";
   answer: string;
-  status: string;
+  sql?: string | null;
+  columns?: string[] | null;
+  rows?: unknown[][] | null;
+  row_count?: number | null;
+  error?: string | null;
 }
 
 export async function postQuery(question: string): Promise<QueryResponse> {
