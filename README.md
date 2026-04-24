@@ -5,13 +5,16 @@
 > 用自然语言提问，多 Agent 协作生成 SQL、在沙箱中执行、产出带图表的分析报告。
 > 面向非技术的业务分析师 / 产品经理 / 运营 / 市场。
 
-🚦 当前版本：`v0.5 · W11 LLMOps + X few-shot RAG + Z stability sampling + W8 HITL + 20-case evaluation gate` —
-LangGraph StateGraph 编排的 4-role Agent（Writer / Reviewer / Executor / Insight），
-带 intent triage（写操作拦截）+ interrupt-based 意图澄清 HITL；
-Writer 的 self-consistency 多数投票（Z）吸收 OpenRouter 路由 noise；
-BM25 检索的 few-shot example bank（X）把 Hard 结构性 pattern 的 accuracy 从 20% 抬到 40%；
-Langfuse tracing + per-role ModelRouter（W11）打通可观测性和 A/B。
-总 accuracy 60%→70%。CI 跑真实 LLM 的 20-case Execution Accuracy 门禁。K8s 在后续周次。
+🚦 **当前版本：`v0.5`** · Execution Accuracy 本地 14/20 = **70%**（baseline 12/20 = 60%）
+
+核心能力：
+
+- **LangGraph 4-role Agent** — Writer / Reviewer / Executor / Insight，按 StateGraph 声明边串联
+- **HITL（W8）** — intent triage 拦截写操作；ambiguous 意图走 `interrupt()` → 等用户澄清 → resume
+- **Z · stability sampling** — Writer 采样 K 次 × Reviewer 规整 × 结果集多数投票，吸收 OpenRouter ±5pp 路由 noise
+- **X · few-shot RAG** — 23 条独立 example bank × BM25 字符 n-gram 检索 × 注入 Writer system prompt，Hard 结构性 pattern 的 accuracy 20%→40%
+- **LLMOps（W11）** — Langfuse tracing（opt-in · keys 未配自动 no-op）+ per-role ModelRouter（writer/reviewer/intent/insight 各自可覆写 model）
+- **Evaluation gate** — CI 里 20-case golden dataset 跑真实 LLM，accuracy 低于阈值就 fail
 
 ---
 
@@ -30,7 +33,7 @@ Langfuse tracing + per-role ModelRouter（W11）打通可观测性和 A/B。
 | 可观测性 | **Langfuse**（可选 · keys 未配则 graceful no-op） + 自研 per-role ModelRouter |
 | CI | GitHub Actions（backend lint/type/test · docker build · **evaluation gate**） |
 
-后续周次增量引入：few-shot RAG（W4-5）· MCP/E2B（W7）· Langfuse + ModelRouter（W11）· Kubernetes（W12-13）。
+下一步：MCP/E2B 沙箱（W7）· Kubernetes 部署（W12-13）· 商业化 + 路演（W14）。完整对照见下方 14 周路线。
 
 ---
 
@@ -80,27 +83,49 @@ uv run uvicorn deepflow_analyst.main:app --reload
 
 ```
 deepflow-analyst/
-├── CLAUDE.md                 # 给 Claude Code / 进阶学员的项目指南（决策理由、踩坑清单）
+├── CLAUDE.md                         # 给 Claude Code / 进阶学员的项目指南（决策理由、踩坑清单）
 ├── src/deepflow_analyst/
-│   ├── main.py               # FastAPI app + 多轮 /api/query 协议
-│   ├── settings.py           # pydantic-settings（temperature=0 等默认值）
-│   ├── llm_client.py         # OpenRouter 薄封装
-│   ├── db.py                 # SQLAlchemy engine
-│   ├── evaluation.py         # Execution Accuracy scorer + `deepflow-eval` CLI
+│   ├── main.py                       # FastAPI app + 多轮 /api/query 协议
+│   ├── settings.py                   # pydantic-settings（temperature=0 / Z / X / W11 的所有 env 开关）
+│   ├── llm_client.py                 # OpenRouter 薄封装 + 可选 Langfuse tracing wrapper
+│   ├── model_router.py               # W11 · resolve_model(role) 按角色取模型，fallback default_model
+│   ├── retrieval.py                  # X · BM25 few-shot bank（CJK 字符 unigram+bigram）
+│   ├── fewshot/
+│   │   └── examples.jsonl            # X · 23 条独立 example（打进 wheel，禁止和 golden 重叠）
+│   ├── db.py                         # SQLAlchemy engine
+│   ├── evaluation.py                 # Execution Accuracy scorer + `deepflow-eval` CLI
 │   └── agent/
-│       ├── pipeline.py       # 4 SQL 角色（generate / review / execute / interpret）
-│       └── graph.py          # LangGraph StateGraph + intent triage + HITL interrupt
-├── tests/
-│   ├── test_*.py             # 37 项单测（pipeline / graph / evaluation / api）
-│   └── golden/               # 黄金数据集（20 条 NL→SQL ground truth）
-├── web/                      # React 19 + Vite 6 + MUI 6
-├── data/seed/                # Chinook SQL（git 忽略，脚本下载 + patch）
-├── scripts/fetch-chinook.sh  # 下载 Chinook + sed 剥离 CREATE DATABASE
-├── .github/workflows/ci.yml  # 3 job：backend · docker · evaluation gate
-├── Dockerfile                # 多阶段（uv builder → slim runtime）
-├── docker-compose.yml        # app + postgres
-└── pyproject.toml            # uv / ruff / mypy / pytest 配置
+│       ├── pipeline.py               # 4 SQL 角色 + Z 采样投票 + X RAG 注入
+│       └── graph.py                  # LangGraph StateGraph + intent triage + HITL interrupt
+├── tests/                            # 58 项单测（pipeline / graph / retrieval / router / evaluation / api）
+│   └── golden/                       # 黄金数据集（20 条 NL→SQL ground truth）
+├── web/                              # React 19 + Vite 6 + MUI 6
+├── data/seed/                        # Chinook SQL（git 忽略，脚本下载 + patch）
+├── scripts/fetch-chinook.sh          # 下载 Chinook + sed 剥离 CREATE DATABASE
+├── .github/workflows/ci.yml          # 3 job：backend · docker · evaluation gate
+├── Dockerfile                        # 多阶段（uv builder → slim runtime）
+├── docker-compose.yml                # app + postgres
+└── pyproject.toml                    # uv / ruff / mypy / pytest 配置
 ```
+
+---
+
+## 核心特性解读
+
+### Z · Stability Sampling
+
+Writer 在 `sample_temperature=0.5` 下采样 `SAMPLE_SIZE` 次，每个候选独立过 Reviewer + 真 DB 执行，再按**结果集多重集**（非 SQL 文本）做多数投票。设计目的是吸收 OpenRouter 上游路由的 ±5pp noise——本地 temp=0 已是稳态，所以 Z 不抬 ceiling、只压 noise。默认 `SAMPLE_SIZE=1`（本地零开销），CI 覆写成 `3`。
+
+### X · Few-shot RAG
+
+Writer 从 `src/deepflow_analyst/fewshot/examples.jsonl` 的 23 条独立 example bank 里用 BM25 检索 top-K 相似 (question, sql) 对，注入 system prompt 作为 precedent。tokenizer 是 CJK 字符 unigram+bigram，无 embedding / torch 依赖。**bank 严格独立于 golden dataset**——`tests/test_retrieval.py::test_bank_independent_of_golden_dataset` 是守门员，任何重叠都是把 ground truth 作弊注入 eval。默认 `RAG_ENABLED=true`；`false` 可做 A/B 对照。贡献：本地 60%→70%，Hard 20%→40%。
+
+### W11 · LLMOps
+
+两件事：
+
+- **Langfuse tracing（opt-in）**：`LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` 同时配齐才启用，否则 `llm_client` 走 plain openai 路径，零 overhead。启用后每次 `chat(role=...)` 在 Langfuse UI 里按 writer / reviewer / intent / insight 分组。
+- **Per-role ModelRouter**：`WRITER_MODEL` / `REVIEWER_MODEL` / `INTENT_MODEL` / `INSIGHT_MODEL` 各自可覆写；为空 fallback 到 `DEFAULT_MODEL`。**有意不做自动复杂度分类**——任何 model fanout 必须先用 `deepflow-eval` 验证。
 
 ---
 
@@ -109,27 +134,28 @@ deepflow-analyst/
 CI 里第三个 job `evaluation` 会在 `pull_request` / `push to main` 时运行：
 
 1. 起一个 PostgreSQL 16 service，灌入 Chinook
-2. 跑 `uv run deepflow-eval`——对每条 golden case：生成 SQL → 执行 → 与 ground truth SQL 的执行结果做集合等价比较
-3. 计算 **Execution Accuracy**；低于 `EVAL_THRESHOLD`（CI 默认 0.60，本地基线 14/20 = 70%，CI 首轮观察 13/20 = 65%）则 fail
+2. 跑 `uv run deepflow-eval` —— 对每条 golden case：生成 SQL → 执行 → 与 ground truth SQL 的执行结果做集合等价比较
+3. 计算 **Execution Accuracy**；低于 `EVAL_THRESHOLD` 就 fail
 4. 上传 `evaluation_report.md` 为 artifact，并写入 PR 的 Step Summary
 
-阈值随基线自然抬升：每次架构改进（CrewAI / LangGraph / Z 采样 / X RAG）把 accuracy 抬上去或把 noise 压下去后，同步上调 `EVAL_THRESHOLD`，防止回归。
+当前阈值 `EVAL_THRESHOLD=0.60`，基于实测 CI 波动范围确定：
 
-> **Z · stability sampling**（v0.3+）：CI 里 `SAMPLE_SIZE=3` 让 Writer 以 `sample_temperature=0.5` 采样 3 次，各自过 Reviewer 后执行，再按**结果集**多数投票。设计目的是吸收 OpenRouter 上游路由的 ±5pp noise。本地开发默认 `SAMPLE_SIZE=1`（零开销），按需在 `.env` 里覆写。
->
-> **X · few-shot RAG**（v0.4+）：`rag_enabled=true`（默认）时，Writer 从 `src/deepflow_analyst/fewshot/examples.jsonl` 的 23 条独立 example 里 BM25 检索 top-K 相似 (question, sql) 对注入 system prompt，给 LLM 提供 hard 结构性 pattern（DISTINCT ON、self-join、多表 join chain）的 precedent。bank 严格独立于 golden dataset（tests 有守门员），`rag_enabled=false` 可做 A/B 对照。总 accuracy 60%→70%，Hard 20%→40%。
+| 环境 | 最近观察（4 次 CI） | 备注 |
+|----|---|----|
+| 本地 RAG + Z=3 | 14/20 = **70%**（稳定复现） | 生产默认配置 |
+| CI RAG + Z=3 | [60%, 65%, 65%, 70%]，均值 65% | OpenRouter 上游路由吃掉一部分本地 gain |
+
+阈值按 **CI 观察值 - 5pp buffer** 定，不跟本地 gain 走——这是 v0.4 X 落地时学到的（当时一度把阈值抬到 0.65，下一次 CI 就跑到 60%，所以 revert 回 0.60）。每次架构改进把 CI 观察值稳定抬上去后，同步上调阈值。
 
 ### 本地跑评估
 
 ```bash
 # 前提：docker compose 已起、.env 里有真实 OPENROUTER_API_KEY
-uv run deepflow-eval
-
-# 只跑前 3 条做 smoke test
-EVAL_LIMIT=3 uv run deepflow-eval
-
-# 把门槛调紧
-EVAL_THRESHOLD=0.80 uv run deepflow-eval
+uv run deepflow-eval                       # 默认 · RAG 开 · N=1 · 最省 token
+SAMPLE_SIZE=3 uv run deepflow-eval         # Z · 多数投票（CI 走这条）
+RAG_ENABLED=false uv run deepflow-eval     # 关 X · 对照组
+EVAL_LIMIT=3 uv run deepflow-eval          # smoke test（前 3 条）
+EVAL_THRESHOLD=0.80 uv run deepflow-eval   # 紧阈值试试水
 ```
 
 ### 启用 CI 门禁：配置 GitHub Secret
@@ -156,13 +182,14 @@ gh secret set OPENROUTER_API_KEY -R LLM-X-Factorer/deepflow-analyst
 | W1 | ✅ 项目骨架 · Docker · FastAPI · Postgres · Chinook |
 | W2 | 产品画布 · PRD 文档（课程材料侧，非代码） |
 | W3 | ✅ 前端 React+MUI · 全栈打通 |
-| W4-5 | ⏳ few-shot example bank / 简易 RAG（抬 Hard cases 的 accuracy） |
+| W4-5 | ✅ **X · few-shot RAG**（BM25 · 23 条独立 example bank · Hard 20%→40%，总 60%→70%）|
 | W6 | ✅ 首个端到端 Demo（4-role pipeline：Writer / Reviewer / Executor / Insight） |
 | W7 | ⏳ MCP · E2B 沙箱 · 外部 API 工具调用 |
 | W8 | ✅ **LangGraph StateGraph · MemorySaver · 写操作拦截 · interrupt-based 澄清 HITL** |
 | W9 | ⏳ 多轮对话扩展 · 敏感表审核 · PostgresSaver 持久化 |
-| W10 | ✅ 20 条 golden dataset · Execution Accuracy · CI 评估门禁（基线 12/20 = 60%） |
-| W11 | ✅ **Langfuse 可观测（opt-in）· per-role ModelRouter（writer/reviewer/intent/insight）** · 语义缓存/FinOps 留给学员 |
+| W10 | ✅ 20 条 golden dataset · Execution Accuracy · CI 评估门禁（基线 12/20 = 60%，v0.5 已抬至 14/20 = 70%）|
+| +Z | ✅ **Z · stability sampling**（多数投票消 CI noise，使 threshold 从 0.55 抬到 0.60 稳定）|
+| W11 | ✅ **Langfuse tracing（opt-in）· per-role ModelRouter** · 语义缓存/FinOps 留给学员 |
 | W12 | ⏳ Kubernetes · Helm · HPA |
 | W13 | ⏳ 蓝绿部署 · 评估阈值门禁卡生产 |
 | W14 | ⏳ 商业化 · 定价 · GTM · 路演 |

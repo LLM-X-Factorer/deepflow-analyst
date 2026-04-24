@@ -134,14 +134,22 @@ RAG_ENABLED=false uv run deepflow-eval    # 关 X · 做 RAG A/B 对照
 ## 架构（5 秒速览）
 
 ```
-question → intent(LLM)
+question → intent(LLM, role=intent)
             ├── write      → write_rejected → END
             ├── ambiguous  → clarify(interrupt → resume) → intent
-            └── read       → writer(LLM) → reviewer(LLM)
-                              → executor(SQL on PG) → insight(LLM) → END
+            └── read       → writer(LLM, role=writer, +RAG examples)
+                              → reviewer(LLM, role=reviewer)
+                              → executor(SQL on PG)
+                              → insight(LLM, role=insight) → END
+
+                         [ Z · SAMPLE_SIZE>1: writer→reviewer→executor 这段
+                           被并行采样 K 次，按结果集多重集多数投票选 SQL ]
+
+                         [ W11 · chat(role=...) 透传到 ModelRouter（按 role
+                           选 model）和 Langfuse（按 role 分组 trace）]
 ```
 
-每次 LLM→LLM 过渡都 **validate_sql**，防止 reviewer 或 resume input 注入写操作。状态用 `MemorySaver` 按 `thread_id` 隔离（W8 教学换成 `PostgresSaver`）。
+每次 LLM→LLM 过渡都 **validate_sql**，防止 reviewer 或 resume input 注入写操作。状态用 `MemorySaver` 按 `thread_id` 隔离（W9 教学换成 `PostgresSaver`）。
 
 ### 关键模块
 
@@ -152,10 +160,10 @@ question → intent(LLM)
 | `src/deepflow_analyst/retrieval.py` | X · BM25 few-shot bank + `get_default_bank()` 缓存单例 |
 | `src/deepflow_analyst/fewshot/examples.jsonl` | 23 条 example，打进 wheel（禁止和 golden 重叠） |
 | `src/deepflow_analyst/model_router.py` | W11 · `resolve_model(role)` per-role 覆写，fallback default_model |
-| `src/deepflow_analyst/llm_client.py` | OpenRouter 薄封装 + 可选 Langfuse wrapper（keys 齐了才激活） |
+| `src/deepflow_analyst/llm_client.py` | OpenRouter 薄封装 + 可选 Langfuse wrapper（keys 齐了才激活）· `chat(role=...)` 透传 |
 | `src/deepflow_analyst/evaluation.py` | Golden-dataset Execution Accuracy scorer + CLI (`deepflow-eval`) |
 | `src/deepflow_analyst/main.py` | FastAPI `/health` + `/api/query`（多轮协议） |
-| `src/deepflow_analyst/llm_client.py` | OpenRouter 薄封装（温度固化、模型路由预留） |
+| `src/deepflow_analyst/settings.py` | pydantic-settings：default_temperature / sample_size / rag_enabled / langfuse_* / WRITER_MODEL 等 |
 | `tests/golden/golden_dataset.jsonl` | 20 条 ground-truth NL→SQL 用例 |
 | `.github/workflows/ci.yml` | backend + docker + evaluation 三 job |
 
@@ -166,13 +174,13 @@ question → intent(LLM)
 | 指标 | 值 | 备注 |
 |------|-----|-----|
 | Accuracy (local baseline N=1) | 12/20 = **60%** | deepseek-v3.2 · temp=0 · Z=off · RAG=off |
-| Accuracy (local RAG N=1) | 14/20 = **70%** | X · 单独开 RAG |
-| Accuracy (local RAG + Z N=3) | 14/20 = **70%** | 默认生产配置；Hard 2/5 = 40% |
-| Accuracy (CI N=3, RAG=on) | 13/20 = 65%（首轮观察） | CI 上游路由吃掉 RAG 的 +10pp；阈值按 CI - 5pp 定 |
-| Easy | 6/6 = 100% | |
-| Medium | 6/9 = 67% | m04/m05 失败是 ORDER BY tiebreaker 与 golden 不一致（语义正确但字段选错） |
-| Hard | 2/5 = 40% | 仍挂：h01（per-country DISTINCT ON）· h02（self-join 字符串拼接）· h05（per-genre DISTINCT ON）|
-| `EVAL_THRESHOLD` | 0.60 | CI 还在 65%，阈值留 5pp buffer；X 的 ceiling 抬升不押在阈值上 |
+| Accuracy (local RAG N=1) | 14/20 = **70%** | X · 单开 RAG，Hard 1/5 |
+| Accuracy (local RAG + Z N=3) | 14/20 = **70%** | 生产默认；Hard 2/5（X 带进来的 h03/h04，Z 帮稳） |
+| Accuracy (CI N=3, RAG=on) | 60%, 65%, 65%, **70%**（4 次 run） | 均值 65%，方差 ±5pp · 最近一次 CI = 本地 |
+| Easy | 6/6 = 100% | 全稳 |
+| Medium | 6-7/9 (67-78%) | m04/m05 是 ORDER BY tiebreaker 与 golden 字段选择不一致（语义对） |
+| Hard | 2/5 = 40%（本地） / 0-1/5（CI） | 仍挂：h01（per-country DISTINCT ON）· h02（self-join ‖）· h05（per-genre DISTINCT ON）|
+| `EVAL_THRESHOLD` | 0.60 | = CI 最低观察值 60% - 0pp 底线（方差 ±5pp，留 10pp buffer 到最高 70%）|
 
 ---
 
@@ -187,7 +195,10 @@ question → intent(LLM)
 - [x] Z · stability sampling（Writer N-sample × Reviewer × 结果集多数投票 · CI 阈值抬到 0.60）
 - [x] X · few-shot RAG（BM25 over CJK 字符 unigram+bigram · 23 条独立 example bank · 注入 Writer system prompt · 60%→70%·Hard 20%→40%）
 - [x] W11 LLMOps（Langfuse tracing + per-role ModelRouter · role 透传到 chat()·未配 key 时 graceful no-op）
+- [ ] W7 MCP / E2B 沙箱 / 外部 API 工具调用
+- [ ] W9 多轮对话扩展 · 敏感表审核 · `PostgresSaver` 持久化
 - [ ] W12 Kubernetes 部署（Helm + HPA + NetworkPolicy）
+- [ ] W13 蓝绿部署 · 评估阈值门禁卡生产
 - [ ] W14 路演 + 商业化文档
 
 ---
