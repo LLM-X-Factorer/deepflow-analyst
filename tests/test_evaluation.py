@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -131,7 +132,7 @@ async def test_evaluate_one_handles_mocked_pipeline(monkeypatch: pytest.MonkeyPa
 
     from deepflow_analyst.agent import pipeline as _pipeline
 
-    async def fake_chat(messages: list[dict[str, str]], model: str | None = None) -> str:
+    async def fake_chat(messages: list[dict[str, str]], **_kwargs: Any) -> str:
         return "SELECT COUNT(*) FROM artist"
 
     monkeypatch.setattr(_pipeline, "chat", fake_chat)

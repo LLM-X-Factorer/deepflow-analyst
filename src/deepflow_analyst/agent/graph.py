@@ -79,7 +79,7 @@ async def _classify_intent(question: str) -> dict[str, Any]:
         {"role": "system", "content": INTENT_SYSTEM_PROMPT},
         {"role": "user", "content": question},
     ]
-    raw = (await chat(messages)).strip()
+    raw = (await chat(messages, role="intent")).strip()
     raw = re.sub(r"^\s*```(?:json)?\s*", "", raw, flags=re.IGNORECASE).strip()
     raw = re.sub(r"\s*```\s*$", "", raw).strip()
     try:

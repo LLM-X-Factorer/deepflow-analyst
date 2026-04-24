@@ -5,12 +5,13 @@
 > 用自然语言提问，多 Agent 协作生成 SQL、在沙箱中执行、产出带图表的分析报告。
 > 面向非技术的业务分析师 / 产品经理 / 运营 / 市场。
 
-🚦 当前版本：`v0.4 · W8 HITL + Z stability sampling + X few-shot RAG + 20-case evaluation gate` —
+🚦 当前版本：`v0.5 · W11 LLMOps + X few-shot RAG + Z stability sampling + W8 HITL + 20-case evaluation gate` —
 LangGraph StateGraph 编排的 4-role Agent（Writer / Reviewer / Executor / Insight），
 带 intent triage（写操作拦截）+ interrupt-based 意图澄清 HITL；
 Writer 的 self-consistency 多数投票（Z）吸收 OpenRouter 路由 noise；
-BM25 检索的 few-shot example bank（X）把 Hard 结构性 pattern 的 accuracy 从 20% 抬到 40%。
-总 accuracy 60%→70%。CI 跑真实 LLM 的 20-case Execution Accuracy 门禁。LLMOps / K8s 在后续周次。
+BM25 检索的 few-shot example bank（X）把 Hard 结构性 pattern 的 accuracy 从 20% 抬到 40%；
+Langfuse tracing + per-role ModelRouter（W11）打通可观测性和 A/B。
+总 accuracy 60%→70%。CI 跑真实 LLM 的 20-case Execution Accuracy 门禁。K8s 在后续周次。
 
 ---
 
@@ -26,6 +27,7 @@ BM25 检索的 few-shot example bank（X）把 Hard 结构性 pattern 的 accura
 | 包管理 | `uv`（Python 3.11）· `pnpm`（Node） |
 | 容器 | Docker · Docker Compose |
 | Few-shot RAG | **`rank-bm25`**（BM25 over CJK 字符 unigram+bigram，无 embedding 依赖） |
+| 可观测性 | **Langfuse**（可选 · keys 未配则 graceful no-op） + 自研 per-role ModelRouter |
 | CI | GitHub Actions（backend lint/type/test · docker build · **evaluation gate**） |
 
 后续周次增量引入：few-shot RAG（W4-5）· MCP/E2B（W7）· Langfuse + ModelRouter（W11）· Kubernetes（W12-13）。
@@ -160,7 +162,7 @@ gh secret set OPENROUTER_API_KEY -R LLM-X-Factorer/deepflow-analyst
 | W8 | ✅ **LangGraph StateGraph · MemorySaver · 写操作拦截 · interrupt-based 澄清 HITL** |
 | W9 | ⏳ 多轮对话扩展 · 敏感表审核 · PostgresSaver 持久化 |
 | W10 | ✅ 20 条 golden dataset · Execution Accuracy · CI 评估门禁（基线 12/20 = 60%） |
-| W11 | ⏳ Langfuse 可观测 · ModelRouter 路由 · 语义缓存 · FinOps |
+| W11 | ✅ **Langfuse 可观测（opt-in）· per-role ModelRouter（writer/reviewer/intent/insight）** · 语义缓存/FinOps 留给学员 |
 | W12 | ⏳ Kubernetes · Helm · HPA |
 | W13 | ⏳ 蓝绿部署 · 评估阈值门禁卡生产 |
 | W14 | ⏳ 商业化 · 定价 · GTM · 路演 |

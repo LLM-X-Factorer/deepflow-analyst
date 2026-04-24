@@ -203,9 +203,9 @@ async def generate_sql(question: str, temperature: float | None = None) -> str:
         {"role": "user", "content": question},
     ]
     if temperature is None:
-        raw = await chat(messages)
+        raw = await chat(messages, role="writer")
     else:
-        raw = await chat(messages, temperature=temperature)
+        raw = await chat(messages, temperature=temperature, role="writer")
     return _strip_markdown(raw)
 
 
@@ -221,7 +221,7 @@ async def review_sql(question: str, candidate_sql: str) -> str:
             "content": f"User question: {question}\n\nCandidate SQL:\n{candidate_sql}",
         },
     ]
-    raw = await chat(messages)
+    raw = await chat(messages, role="reviewer")
     return _strip_markdown(raw)
 
 
@@ -243,7 +243,7 @@ async def interpret(
         {"role": "system", "content": INTERPRET_SYSTEM_PROMPT},
         {"role": "user", "content": user_msg},
     ]
-    return (await chat(messages)).strip()
+    return (await chat(messages, role="insight")).strip()
 
 
 async def _writer_review_once(question: str, writer_temp: float | None) -> str:

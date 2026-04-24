@@ -78,7 +78,7 @@ async def test_generate_sql_injects_retrieved_examples(monkeypatch: pytest.Monke
 
     seen: dict[str, str] = {}
 
-    async def fake_chat(messages: list[dict[str, str]], model: str | None = None) -> str:
+    async def fake_chat(messages: list[dict[str, str]], **_kwargs: Any) -> str:
         seen["system"] = messages[0]["content"]
         return "SELECT 1"
 
@@ -96,7 +96,7 @@ async def test_generate_sql_skips_examples_when_disabled(monkeypatch: pytest.Mon
 
     seen: dict[str, str] = {}
 
-    async def fake_chat(messages: list[dict[str, str]], model: str | None = None) -> str:
+    async def fake_chat(messages: list[dict[str, str]], **_kwargs: Any) -> str:
         seen["system"] = messages[0]["content"]
         return "SELECT 1"
 
@@ -129,6 +129,7 @@ async def test_generate_reviewed_sql_single_shot_path(monkeypatch: pytest.Monkey
         messages: list[dict[str, str]],
         model: str | None = None,
         temperature: float | None = None,
+        **_kwargs: Any,
     ) -> str:
         calls.append({"temperature": temperature})
         return "SELECT 1 AS n"
@@ -162,6 +163,7 @@ async def test_generate_reviewed_sql_majority_vote(monkeypatch: pytest.MonkeyPat
         messages: list[dict[str, str]],
         model: str | None = None,
         temperature: float | None = None,
+        **_kwargs: Any,
     ) -> str:
         system = messages[0]["content"]
         if "SQL reviewer" in system:
@@ -204,6 +206,7 @@ async def test_generate_reviewed_sql_sampling_falls_back_to_successful(
         messages: list[dict[str, str]],
         model: str | None = None,
         temperature: float | None = None,
+        **_kwargs: Any,
     ) -> str:
         system = messages[0]["content"]
         if "SQL reviewer" in system:
@@ -231,7 +234,7 @@ async def test_run_end_to_end_with_mocked_llm(monkeypatch: pytest.MonkeyPatch) -
         ]
     )
 
-    async def fake_chat(messages: list[dict[str, str]], model: str | None = None) -> str:
+    async def fake_chat(messages: list[dict[str, str]], **_kwargs: Any) -> str:
         return next(responses)
 
     monkeypatch.setattr(pipeline, "chat", fake_chat)
@@ -247,7 +250,7 @@ async def test_run_end_to_end_with_mocked_llm(monkeypatch: pytest.MonkeyPatch) -
 async def test_run_rejects_injected_mutation(monkeypatch: pytest.MonkeyPatch) -> None:
     """An LLM emitting a forbidden statement disguised after a SELECT must be blocked."""
 
-    async def fake_chat(messages: list[dict[str, str]], model: str | None = None) -> str:
+    async def fake_chat(messages: list[dict[str, str]], **_kwargs: Any) -> str:
         return "SELECT 1; DROP TABLE customer"
 
     monkeypatch.setattr(pipeline, "chat", fake_chat)

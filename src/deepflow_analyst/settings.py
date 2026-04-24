@@ -40,6 +40,21 @@ class Settings(BaseSettings):
     rag_enabled: bool = True
     rag_top_k: int = 3
 
+    # W11 · Langfuse tracing（可选）。三个 key 都配齐才启用；任何一个缺就
+    # graceful no-op（保持 v0.4 行为，不影响 eval / CI）。LANGFUSE_HOST 默认
+    # 是 Langfuse Cloud；自建 instance 在 .env 里覆写。
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_host: str = "https://cloud.langfuse.com"
+
+    # W11 · ModelRouter（per-role model overrides）。任何一个空字符串代表
+    # fallback 到 `default_model`。教学意图：同一套 LangGraph pipeline，通过
+    # env var 做 A/B（例如 Writer 用 deepseek、Insight 换 kimi-k2）。
+    writer_model: str = ""
+    reviewer_model: str = ""
+    intent_model: str = ""
+    insight_model: str = ""
+
     database_url: str = "postgresql+psycopg://deepflow:deepflow@localhost:5432/deepflow"
 
 

@@ -31,6 +31,7 @@
 | 默认模型 | **deepseek/deepseek-v3.2** | 见"为什么不用 Claude/GPT" |
 | 评估 | 自研 `deepflow-eval` CLI + Execution Accuracy | 避免 DeepEval/Ragas 的额外依赖 |
 | Retrieval (X) | `rank-bm25`（纯 Python，无 torch/embedding 依赖） | 见"为什么 X 用 BM25" |
+| LLMOps (W11) | `langfuse>=3` · 未配 key 时 graceful no-op | 零摩擦教学 |
 | 容器 | Docker + Docker Compose | |
 | CI | GitHub Actions（3 job：backend、docker、evaluation gate） | |
 
@@ -52,6 +53,12 @@ CrewAI 对一个**固定 4 步流水线**是 overkill——它的 planner agent 
 - 不引入 sentence-transformers + torch 这种 GB 级依赖
 - 23 条 short-question 小 corpus 上 BM25 的召回足够——字符 unigram+bigram 在中文上比按词分词更省依赖且对短 query 更 robust
 - 教学递进清晰：W4-5 起步用 BM25，W11 升级成 pgvector + embedding 当作对比示例，跟「先稳定基线再量改进」一脉相承
+
+### W11 · Langfuse + ModelRouter 的最小可行设计
+
+- **ModelRouter 不做自动复杂度分类**。OpenRouter 对 model 换换之间 accuracy 影响大（见踩坑清单），任何 fanout 都必须用 `deepflow-eval` 验过；自动路由只会掩盖效果。当前只给 `writer/reviewer/intent/insight` 四个 role 提供 env var 覆写（WRITER_MODEL / REVIEWER_MODEL / INTENT_MODEL / INSIGHT_MODEL），为空就 fallback 到 `DEFAULT_MODEL`。
+- **Langfuse 完全 opt-in**。`LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` 同时配齐才启用 tracing，未配则用 plain openai 客户端、零额外 overhead、CI 绿不受影响。
+- **role kwarg 透传到 `chat()`**：是 ModelRouter 路由 + Langfuse generation 命名的唯一入口。生产代码从不硬编码 model，测试用 `**_kwargs: Any` catch-all 接住新 kwarg，向后兼容。
 
 ### Example bank 和 golden dataset 的严格隔离
 
@@ -144,6 +151,8 @@ question → intent(LLM)
 | `src/deepflow_analyst/agent/pipeline.py` | 4 个 SQL 角色（generate / review / execute / interpret）· Z 采样投票 · X RAG 注入 |
 | `src/deepflow_analyst/retrieval.py` | X · BM25 few-shot bank + `get_default_bank()` 缓存单例 |
 | `src/deepflow_analyst/fewshot/examples.jsonl` | 23 条 example，打进 wheel（禁止和 golden 重叠） |
+| `src/deepflow_analyst/model_router.py` | W11 · `resolve_model(role)` per-role 覆写，fallback default_model |
+| `src/deepflow_analyst/llm_client.py` | OpenRouter 薄封装 + 可选 Langfuse wrapper（keys 齐了才激活） |
 | `src/deepflow_analyst/evaluation.py` | Golden-dataset Execution Accuracy scorer + CLI (`deepflow-eval`) |
 | `src/deepflow_analyst/main.py` | FastAPI `/health` + `/api/query`（多轮协议） |
 | `src/deepflow_analyst/llm_client.py` | OpenRouter 薄封装（温度固化、模型路由预留） |
@@ -177,7 +186,7 @@ question → intent(LLM)
 - [x] W8 HITL（LangGraph StateGraph + intent 分类 + 写拦截 + interrupt-resume 澄清）
 - [x] Z · stability sampling（Writer N-sample × Reviewer × 结果集多数投票 · CI 阈值抬到 0.60）
 - [x] X · few-shot RAG（BM25 over CJK 字符 unigram+bigram · 23 条独立 example bank · 注入 Writer system prompt · 60%→70%·Hard 20%→40%）
-- [ ] W11 LLMOps（Langfuse tracing + ModelRouter）
+- [x] W11 LLMOps（Langfuse tracing + per-role ModelRouter · role 透传到 chat()·未配 key 时 graceful no-op）
 - [ ] W12 Kubernetes 部署（Helm + HPA + NetworkPolicy）
 - [ ] W14 路演 + 商业化文档
 
