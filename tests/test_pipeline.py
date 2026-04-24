@@ -68,6 +68,43 @@ def test_jsonable_decimal_and_datetime() -> None:
     assert pipeline._jsonable(datetime(2026, 4, 23, 12, 0)).startswith("2026-04-23")
 
 
+@pytest.mark.asyncio
+async def test_generate_sql_injects_retrieved_examples(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With RAG enabled the Writer system prompt carries EXAMPLES section."""
+    from deepflow_analyst import settings as _settings
+
+    monkeypatch.setattr(_settings.settings, "rag_enabled", True)
+    monkeypatch.setattr(_settings.settings, "rag_top_k", 2)
+
+    seen: dict[str, str] = {}
+
+    async def fake_chat(messages: list[dict[str, str]], model: str | None = None) -> str:
+        seen["system"] = messages[0]["content"]
+        return "SELECT 1"
+
+    monkeypatch.setattr(pipeline, "chat", fake_chat)
+    await pipeline.generate_sql("每个国家累计消费最多的客户")
+    assert "EXAMPLES" in seen["system"]
+    assert "Q:" in seen["system"] and "SQL:" in seen["system"]
+
+
+@pytest.mark.asyncio
+async def test_generate_sql_skips_examples_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    from deepflow_analyst import settings as _settings
+
+    monkeypatch.setattr(_settings.settings, "rag_enabled", False)
+
+    seen: dict[str, str] = {}
+
+    async def fake_chat(messages: list[dict[str, str]], model: str | None = None) -> str:
+        seen["system"] = messages[0]["content"]
+        return "SELECT 1"
+
+    monkeypatch.setattr(pipeline, "chat", fake_chat)
+    await pipeline.generate_sql("随便一个问题")
+    assert "EXAMPLES" not in seen["system"]
+
+
 def test_result_vote_key_order_insensitive() -> None:
     k1 = pipeline._result_vote_key(["n"], [["a"], ["b"]])
     k2 = pipeline._result_vote_key(["n"], [["b"], ["a"]])

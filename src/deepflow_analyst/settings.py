@@ -33,6 +33,13 @@ class Settings(BaseSettings):
     sample_size: int = 1
     sample_temperature: float = 0.5
 
+    # X · few-shot RAG. rag_enabled=True 时 Writer 从本地 BM25 example bank 里
+    # 检索 top-K 相似的 (question, sql) 对，注入 system prompt 作为 precedent，
+    # 让 LLM 在 hard 结构性 pattern 上（self-join / DISTINCT ON / 多表 join
+    # chain）有可模仿的参考答案。bank 独立于 golden dataset，严禁重叠。
+    rag_enabled: bool = True
+    rag_top_k: int = 3
+
     database_url: str = "postgresql+psycopg://deepflow:deepflow@localhost:5432/deepflow"
 
 

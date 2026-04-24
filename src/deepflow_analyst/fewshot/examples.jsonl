@@ -1,0 +1,30 @@
+# Few-shot example bank for the Writer agent.
+# MUST NOT overlap with tests/golden/golden_dataset.jsonl — that would
+# leak ground truth into the eval loop. tests/test_retrieval.py enforces
+# no exact-question overlap.
+# 23 examples covering the hard SQL patterns on Chinook:
+#   single-table · group-by · HAVING · LEFT-JOIN anti-join · DISTINCT ON
+#   per-group-top · self-join · multi-join chain · date filter · etc.
+{"question":"数据库里有多少位员工？","sql":"SELECT COUNT(*) AS n FROM employee"}
+{"question":"列出所有曲风的名字","sql":"SELECT name FROM genre ORDER BY genre_id"}
+{"question":"每张专辑收录了多少曲目？","sql":"SELECT a.title, COUNT(t.track_id) AS tracks FROM album a JOIN track t ON a.album_id = t.album_id GROUP BY a.album_id, a.title ORDER BY tracks DESC, a.title"}
+{"question":"每个客户下了多少订单？按订单数降序","sql":"SELECT c.customer_id, COUNT(i.invoice_id) AS orders FROM customer c JOIN invoice i ON c.customer_id = i.customer_id GROUP BY c.customer_id ORDER BY orders DESC, c.customer_id"}
+{"question":"累计消费超过 40 的客户","sql":"SELECT c.customer_id, SUM(i.total) AS spent FROM customer c JOIN invoice i ON c.customer_id = i.customer_id GROUP BY c.customer_id HAVING SUM(i.total) > 40 ORDER BY spent DESC, c.customer_id"}
+{"question":"持有超过 50 首曲目的曲风","sql":"SELECT g.name, COUNT(t.track_id) AS tracks FROM genre g JOIN track t ON g.genre_id = t.genre_id GROUP BY g.genre_id, g.name HAVING COUNT(t.track_id) > 50 ORDER BY tracks DESC, g.name"}
+{"question":"从未被收录进任何播放列表的曲目","sql":"SELECT t.name FROM track t LEFT JOIN playlist_track pt ON t.track_id = pt.track_id WHERE pt.playlist_id IS NULL ORDER BY t.name"}
+{"question":"没有负责任何客户的员工","sql":"SELECT e.first_name, e.last_name FROM employee e LEFT JOIN customer c ON c.support_rep_id = e.employee_id WHERE c.customer_id IS NULL ORDER BY e.last_name"}
+{"question":"每张专辑里时长最长的曲目","sql":"SELECT DISTINCT ON (a.album_id) a.title AS album, t.name AS track, t.milliseconds FROM album a JOIN track t ON t.album_id = a.album_id ORDER BY a.album_id, t.milliseconds DESC, t.track_id"}
+{"question":"每个员工手下消费最多的客户","sql":"SELECT DISTINCT ON (e.employee_id) e.first_name || ' ' || e.last_name AS employee, c.customer_id, SUM(i.total) AS spent FROM employee e JOIN customer c ON c.support_rep_id = e.employee_id JOIN invoice i ON i.customer_id = c.customer_id GROUP BY e.employee_id, e.first_name, e.last_name, c.customer_id ORDER BY e.employee_id, spent DESC"}
+{"question":"每个曲风里单价最高的曲目","sql":"SELECT DISTINCT ON (g.genre_id) g.name AS genre, t.name AS track, t.unit_price FROM genre g JOIN track t ON t.genre_id = g.genre_id ORDER BY g.genre_id, t.unit_price DESC, t.track_id"}
+{"question":"每位员工及其上级经理的名字（没有经理显示 N/A）","sql":"SELECT e.first_name || ' ' || e.last_name AS employee, COALESCE(m.first_name || ' ' || m.last_name, 'N/A') AS manager FROM employee e LEFT JOIN employee m ON e.reports_to = m.employee_id ORDER BY e.employee_id"}
+{"question":"每位员工带的下属数量","sql":"SELECT m.employee_id, m.first_name, m.last_name, COUNT(e.employee_id) AS subordinates FROM employee m LEFT JOIN employee e ON e.reports_to = m.employee_id GROUP BY m.employee_id, m.first_name, m.last_name ORDER BY subordinates DESC, m.employee_id"}
+{"question":"按专辑统计销售总额，返回前 20 张","sql":"SELECT al.album_id, al.title, SUM(il.unit_price * il.quantity) AS revenue FROM album al JOIN track t ON t.album_id = al.album_id JOIN invoice_line il ON il.track_id = t.track_id GROUP BY al.album_id, al.title ORDER BY revenue DESC, al.album_id LIMIT 20"}
+{"question":"按曲风统计购买总数量","sql":"SELECT g.name, SUM(il.quantity) AS units FROM genre g JOIN track t ON t.genre_id = g.genre_id JOIN invoice_line il ON il.track_id = t.track_id GROUP BY g.genre_id, g.name ORDER BY units DESC, g.name"}
+{"question":"按播放列表统计包含曲目数","sql":"SELECT p.name, COUNT(pt.track_id) AS tracks FROM playlist p JOIN playlist_track pt ON p.playlist_id = pt.playlist_id GROUP BY p.playlist_id, p.name ORDER BY tracks DESC, p.name"}
+{"question":"按购买数量最多的 10 位艺人","sql":"SELECT ar.artist_id, ar.name, SUM(il.quantity) AS units FROM artist ar JOIN album al ON al.artist_id = ar.artist_id JOIN track t ON t.album_id = al.album_id JOIN invoice_line il ON il.track_id = t.track_id GROUP BY ar.artist_id, ar.name ORDER BY units DESC, ar.artist_id LIMIT 10"}
+{"question":"Rock 曲风里单价最高的 5 首曲目","sql":"SELECT t.name, t.unit_price FROM track t JOIN genre g ON t.genre_id = g.genre_id WHERE g.name = 'Rock' ORDER BY t.unit_price DESC, t.track_id LIMIT 5"}
+{"question":"2022 年一共有多少张订单","sql":"SELECT COUNT(*) AS n FROM invoice WHERE EXTRACT(YEAR FROM invoice_date) = 2022"}
+{"question":"2024 年每个月的销售额","sql":"SELECT EXTRACT(MONTH FROM invoice_date)::int AS month, SUM(total) AS revenue FROM invoice WHERE EXTRACT(YEAR FROM invoice_date) = 2024 GROUP BY month ORDER BY month"}
+{"question":"每个开票国家的平均订单金额","sql":"SELECT billing_country, AVG(total) AS avg_total FROM invoice GROUP BY billing_country ORDER BY avg_total DESC, billing_country"}
+{"question":"所有客户的全名（姓名合并），按字母顺序","sql":"SELECT first_name || ' ' || last_name AS full_name FROM customer ORDER BY full_name"}
+{"question":"至少买过一次 Jazz 曲目的不同客户","sql":"SELECT DISTINCT c.customer_id, c.first_name, c.last_name FROM customer c JOIN invoice i ON c.customer_id = i.customer_id JOIN invoice_line il ON i.invoice_id = il.invoice_id JOIN track t ON il.track_id = t.track_id JOIN genre g ON t.genre_id = g.genre_id WHERE g.name = 'Jazz' ORDER BY c.customer_id"}

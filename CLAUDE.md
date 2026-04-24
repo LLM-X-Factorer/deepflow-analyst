@@ -30,6 +30,7 @@
 | LLM 网关 | **OpenRouter**（统一 key、多 provider 切换） | |
 | 默认模型 | **deepseek/deepseek-v3.2** | 见"为什么不用 Claude/GPT" |
 | 评估 | 自研 `deepflow-eval` CLI + Execution Accuracy | 避免 DeepEval/Ragas 的额外依赖 |
+| Retrieval (X) | `rank-bm25`（纯 Python，无 torch/embedding 依赖） | 见"为什么 X 用 BM25" |
 | 容器 | Docker + Docker Compose | |
 | CI | GitHub Actions（3 job：backend、docker、evaluation gate） | |
 
@@ -44,6 +45,17 @@ CrewAI 对一个**固定 4 步流水线**是 overkill——它的 planner agent 
 ### 为什么 temperature = 0
 
 未固定温度时本地跑 4/7 而 CI 跑 5/7 → 14pp 随机漂移让每个改动都无法 measure。pinned `settings.default_temperature = 0.0` 后两次 back-to-back eval 产出一致 57.1%，此后所有改动都可以用数据对比。**不要把它改回 >0**，除非 W11 教学里有意对比 temperature 对解读 naturalness 的影响（且只针对 Insight agent，不影响 SQL Writer）。
+
+### 为什么 X（RAG）用 BM25 字符 n-gram 而不是 embedding
+
+- 不依赖外部 embedding API（OpenRouter 主打 chat completions，embeddings 不通用）
+- 不引入 sentence-transformers + torch 这种 GB 级依赖
+- 23 条 short-question 小 corpus 上 BM25 的召回足够——字符 unigram+bigram 在中文上比按词分词更省依赖且对短 query 更 robust
+- 教学递进清晰：W4-5 起步用 BM25，W11 升级成 pgvector + embedding 当作对比示例，跟「先稳定基线再量改进」一脉相承
+
+### Example bank 和 golden dataset 的严格隔离
+
+`src/deepflow_analyst/fewshot/examples.jsonl`（23 条，打包进 wheel）**绝对不能**和 `tests/golden/golden_dataset.jsonl` 的 `question` 字段有重叠——否则 RAG 会把 golden 的 ground truth SQL 注入 Writer prompt，让 eval 分数虚高。`tests/test_retrieval.py::test_bank_independent_of_golden_dataset` 是这个不变式的守门员，回归到这条要立刻改不要放过。
 
 ### 为什么 Z 用 SAMPLE_TEMPERATURE=0.5 而 default_temperature 还是 0
 
@@ -89,6 +101,7 @@ uv run deepflow-eval                      # 全量（20 cases · 单次采样 ·
 EVAL_LIMIT=3 uv run deepflow-eval         # smoke test
 EVAL_THRESHOLD=0.70 uv run deepflow-eval  # 紧阈值
 SAMPLE_SIZE=3 uv run deepflow-eval        # Z · 多数投票（CI 走这条路径）
+RAG_ENABLED=false uv run deepflow-eval    # 关 X · 做 RAG A/B 对照
 ```
 
 ### 换依赖后必须 `--build`
@@ -128,7 +141,9 @@ question → intent(LLM)
 | 文件 | 职责 |
 |------|------|
 | `src/deepflow_analyst/agent/graph.py` | LangGraph 拓扑 + HITL 节点 + 公开 `run()` |
-| `src/deepflow_analyst/agent/pipeline.py` | 4 个 SQL 角色（generate / review / execute / interpret） |
+| `src/deepflow_analyst/agent/pipeline.py` | 4 个 SQL 角色（generate / review / execute / interpret）· Z 采样投票 · X RAG 注入 |
+| `src/deepflow_analyst/retrieval.py` | X · BM25 few-shot bank + `get_default_bank()` 缓存单例 |
+| `src/deepflow_analyst/fewshot/examples.jsonl` | 23 条 example，打进 wheel（禁止和 golden 重叠） |
 | `src/deepflow_analyst/evaluation.py` | Golden-dataset Execution Accuracy scorer + CLI (`deepflow-eval`) |
 | `src/deepflow_analyst/main.py` | FastAPI `/health` + `/api/query`（多轮协议） |
 | `src/deepflow_analyst/llm_client.py` | OpenRouter 薄封装（温度固化、模型路由预留） |
@@ -141,13 +156,14 @@ question → intent(LLM)
 
 | 指标 | 值 | 备注 |
 |------|-----|-----|
-| Accuracy (local N=1) | 12/20 = **60%** | deepseek-v3.2 · temp=0 · 稳定 |
-| Accuracy (local N=3) | 12/20 = **60%** | Z · 三轮完全重复的 per-case 结果，lift 为 0（ceiling-bound） |
-| Accuracy (CI N=3) | ~60% | Z 吸收 ±5pp provider noise |
+| Accuracy (local baseline N=1) | 12/20 = **60%** | deepseek-v3.2 · temp=0 · Z=off · RAG=off |
+| Accuracy (local RAG N=1) | 14/20 = **70%** | X · 单独开 RAG |
+| Accuracy (local RAG + Z N=3) | 14/20 = **70%** | 默认生产配置；Hard 2/5 = 40% |
+| Accuracy (CI N=3, RAG=on) | 65-70%（预期） | 阈值 0.65 = 70% - 5pp provider buffer |
 | Easy | 6/6 = 100% | |
-| Medium | 5/9 = 56% | |
-| Hard | 1/5 = 20% | **瓶颈**：self-join / DISTINCT ON / 5-way JOIN / 算法歧义 |
-| `EVAL_THRESHOLD` | 0.60 | Z 消 noise 后，阈值从 0.55 抬到 0.60，卡住基线 |
+| Medium | 6/9 = 67% | m04/m05 失败是 ORDER BY tiebreaker 与 golden 不一致（语义正确但字段选错） |
+| Hard | 2/5 = 40% | 仍挂：h01（per-country DISTINCT ON）· h02（self-join 字符串拼接）· h05（per-genre DISTINCT ON）|
+| `EVAL_THRESHOLD` | 0.65 | X 抬 ceiling 后阈值从 0.60 抬到 0.65 |
 
 ---
 
@@ -160,7 +176,7 @@ question → intent(LLM)
 - [x] 4-role 架构（+ SQL Reviewer）
 - [x] W8 HITL（LangGraph StateGraph + intent 分类 + 写拦截 + interrupt-resume 澄清）
 - [x] Z · stability sampling（Writer N-sample × Reviewer × 结果集多数投票 · CI 阈值抬到 0.60）
-- [ ] **X · few-shot example bank**（轻量 RAG → 预期 Hard 20%→45%，总 60%→70%+）
+- [x] X · few-shot RAG（BM25 over CJK 字符 unigram+bigram · 23 条独立 example bank · 注入 Writer system prompt · 60%→70%·Hard 20%→40%）
 - [ ] W11 LLMOps（Langfuse tracing + ModelRouter）
 - [ ] W12 Kubernetes 部署（Helm + HPA + NetworkPolicy）
 - [ ] W14 路演 + 商业化文档

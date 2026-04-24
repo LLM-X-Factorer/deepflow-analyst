@@ -107,11 +107,15 @@ jobs:
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           DATABASE_URL: postgresql+psycopg://deepflow:deepflow@localhost:5432/deepflow
-          # Z · stability sampling: Writer 采样 3 次，各自 Reviewer+Execute，结果集
-          # 多数投票。目的是吸收 OpenRouter 路由 ±5pp noise 并把 CI 阈值从 0.55
-          # 抬到 0.60（本地 N=1/N=3 三轮连续 12/20 = 60.0%，per-case 完全一致）。
+          # Z (stability sampling) + X (few-shot RAG) 组合：
+          # Z: Writer 采样 3 次 → 各自 Reviewer+Execute → 结果集多数投票（消 noise）
+          # X: Writer system prompt 注入 top-3 BM25 检索的 (question, sql) 示例（抬 ceiling）
+          # 本地 X 单独：60%→70%（Medium 78%、Hard 20%）
+          # 本地 X+Z：14/20 = 70%（Hard 20%→40%，结构性 DISTINCT ON 过了）
+          # 阈值 0.65 = 本地 70% - 5pp provider noise buffer。
           SAMPLE_SIZE: "3"
-          EVAL_THRESHOLD: "0.60"
+          RAG_ENABLED: "true"
+          EVAL_THRESHOLD: "0.65"
         run: |
           if [ -z "$OPENROUTER_API_KEY" ]; then
             echo "::warning title=Evaluation skipped::OPENROUTER_API_KEY secret not configured. Set it in repo settings to enable the accuracy gate."

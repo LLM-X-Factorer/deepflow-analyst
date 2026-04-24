@@ -28,6 +28,7 @@ from sqlalchemy import text
 
 from ..db import engine
 from ..llm_client import chat
+from ..retrieval import format_examples_block, get_default_bank
 from ..settings import settings
 
 CHINOOK_SCHEMA = """\
@@ -162,6 +163,33 @@ def execute_sql(sql: str) -> tuple[list[str], list[list[Any]]]:
     return columns, rows
 
 
+def _build_writer_system_prompt(question: str) -> str:
+    """Assemble the Writer system prompt, optionally with retrieved examples.
+
+    X · few-shot RAG: when enabled, prepend a small block of similar solved
+    question→SQL pairs drawn from the local BM25 example bank. The bank is
+    tiny (~25 entries) and independent of the golden dataset, so this only
+    burns a few hundred extra tokens per call while giving the LLM concrete
+    precedent for hard structural patterns.
+    """
+    if not settings.rag_enabled or settings.rag_top_k <= 0:
+        return SQL_SYSTEM_PROMPT
+    try:
+        bank = get_default_bank()
+    except Exception:
+        # Bank missing/corrupt: fail open to the zero-shot prompt rather
+        # than blocking query generation on a retrieval infra problem.
+        return SQL_SYSTEM_PROMPT
+    examples = bank.top_k(question, k=settings.rag_top_k)
+    if not examples:
+        return SQL_SYSTEM_PROMPT
+    return (
+        SQL_SYSTEM_PROMPT + "\n\nEXAMPLES (similar solved problems — study the patterns,\n"
+        "do not copy literally unless the question genuinely matches):\n\n"
+        + format_examples_block(examples)
+    )
+
+
 async def generate_sql(question: str, temperature: float | None = None) -> str:
     """Role 1 · SQL Writer Agent.
 
@@ -171,7 +199,7 @@ async def generate_sql(question: str, temperature: float | None = None) -> str:
     without the kwarg keep working.
     """
     messages = [
-        {"role": "system", "content": SQL_SYSTEM_PROMPT},
+        {"role": "system", "content": _build_writer_system_prompt(question)},
         {"role": "user", "content": question},
     ]
     if temperature is None:
