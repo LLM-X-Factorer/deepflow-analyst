@@ -159,11 +159,11 @@ question → intent(LLM)
 | Accuracy (local baseline N=1) | 12/20 = **60%** | deepseek-v3.2 · temp=0 · Z=off · RAG=off |
 | Accuracy (local RAG N=1) | 14/20 = **70%** | X · 单独开 RAG |
 | Accuracy (local RAG + Z N=3) | 14/20 = **70%** | 默认生产配置；Hard 2/5 = 40% |
-| Accuracy (CI N=3, RAG=on) | 65-70%（预期） | 阈值 0.65 = 70% - 5pp provider buffer |
+| Accuracy (CI N=3, RAG=on) | 13/20 = 65%（首轮观察） | CI 上游路由吃掉 RAG 的 +10pp；阈值按 CI - 5pp 定 |
 | Easy | 6/6 = 100% | |
 | Medium | 6/9 = 67% | m04/m05 失败是 ORDER BY tiebreaker 与 golden 不一致（语义正确但字段选错） |
 | Hard | 2/5 = 40% | 仍挂：h01（per-country DISTINCT ON）· h02（self-join 字符串拼接）· h05（per-genre DISTINCT ON）|
-| `EVAL_THRESHOLD` | 0.65 | X 抬 ceiling 后阈值从 0.60 抬到 0.65 |
+| `EVAL_THRESHOLD` | 0.60 | CI 还在 65%，阈值留 5pp buffer；X 的 ceiling 抬升不押在阈值上 |
 
 ---
 
